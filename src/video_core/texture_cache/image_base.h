@@ -106,6 +106,8 @@ struct ImageBase {
 
     u64 modification_tick = 0;
     size_t lru_index = SIZE_MAX;
+    // Frame in which the LRU entry was last touched, so per-draw touches can be collapsed.
+    u64 lru_touch_frame = 0;
 
     std::array<u32, MAX_MIP_LEVELS> mip_level_offsets{};
 

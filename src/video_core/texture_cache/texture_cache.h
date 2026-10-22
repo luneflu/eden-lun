@@ -2517,7 +2517,10 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
     if (is_modification) {
         MarkModification(image);
     }
-    lru_cache.Touch(image.lru_index, frame_tick);
+    if (image.lru_touch_frame != frame_tick) {
+        image.lru_touch_frame = frame_tick;
+        lru_cache.Touch(image.lru_index, frame_tick);
+    }
 }
 
 template <class P>
