@@ -20,6 +20,8 @@
 #elif defined(__HAIKU__)
 #include <kernel/OS.h>
 #elif defined(_WIN32)
+#include <cstdlib>
+#include <vector>
 #include <windows.h>
 #include "common/string_util.h"
 #include "common/windows/timer_resolution.h"
@@ -539,6 +541,84 @@ void SetCurrentThreadName(const char* name) {
 #endif
 }
 
+#ifdef _WIN32
+namespace {
+
+struct WindowsCoreMasks {
+    DWORD_PTR physical;
+    DWORD_PTR smt;
+    DWORD_PTR all;
+};
+
+const WindowsCoreMasks& GetWindowsCoreMasks() {
+    static const WindowsCoreMasks masks = [] {
+        DWORD_PTR process_mask = 0;
+        DWORD_PTR system_mask = 0;
+        if (GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask) == 0) {
+            return WindowsCoreMasks{0, 0, 0};
+        }
+
+        DWORD size = 0;
+        GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &size);
+        if (size == 0) {
+            return WindowsCoreMasks{0, 0, 0};
+        }
+        std::vector<u8> buffer(size);
+        if (GetLogicalProcessorInformationEx(
+                RelationProcessorCore,
+                reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
+                &size) == 0) {
+            return WindowsCoreMasks{0, 0, 0};
+        }
+
+        DWORD_PTR physical = 0;
+        for (DWORD offset = 0; offset < size;) {
+            const auto* info = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(
+                buffer.data() + offset);
+            if (info->Relationship == RelationProcessorCore) {
+                // Group 0 only; more than 64 logical processors needs GROUP_AFFINITY.
+                const DWORD_PTR siblings = static_cast<DWORD_PTR>(info->Processor.GroupMask[0].Mask);
+                if (siblings != 0) {
+                    physical |= siblings & (~siblings + 1);
+                }
+            }
+            offset += info->Size;
+        }
+
+        physical &= process_mask;
+        return WindowsCoreMasks{physical, process_mask & ~physical, process_mask};
+    }();
+    return masks;
+}
+
+// Pinning is opt-in: EDEN_AFFINITY=1 enables it, EDEN_PERF_MASK / EDEN_EFF_MASK override the
+// detected one-logical-per-physical-core mask with an explicit hex mask. 0 leaves a thread alone.
+DWORD_PTR WindowsCoreMask(bool performance) {
+    if (const char* override_value = std::getenv(performance ? "EDEN_PERF_MASK" : "EDEN_EFF_MASK")) {
+        return static_cast<DWORD_PTR>(std::strtoull(override_value, nullptr, 16));
+    }
+    if (std::getenv("EDEN_AFFINITY") == nullptr) {
+        return 0;
+    }
+    const WindowsCoreMasks& masks = GetWindowsCoreMasks();
+    return performance ? masks.physical : masks.smt;
+}
+
+void ApplyCurrentThreadAffinity(DWORD_PTR mask) {
+    if (mask == 0) {
+        return;
+    }
+    if (SetThreadAffinityMask(GetCurrentThread(), mask) == 0) {
+        LOG_WARNING(Common, "Could not restrict thread to affinity mask {:#x}: {}", mask,
+                    GetLastErrorMsg());
+        return;
+    }
+    LOG_INFO(Common, "Pinned thread to affinity mask {:#x}", mask);
+}
+
+} // Anonymous namespace
+#endif
+
 void SetCurrentThreadToPerformanceCores() {
 #if defined(__ANDROID__)
     if (ADPF::AddCurrentThread(ADPF::Session::Render)) {
@@ -546,6 +626,8 @@ void SetCurrentThreadToPerformanceCores() {
         return;
     }
     SetCurrentThreadCoreGroup(CoreGroup::Performance);
+#elif defined(_WIN32)
+    ApplyCurrentThreadAffinity(WindowsCoreMask(true));
 #endif
 }
 
@@ -556,6 +638,8 @@ void SetCurrentThreadToEfficiencyCores() {
         return;
     }
     SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
+#elif defined(_WIN32)
+    ApplyCurrentThreadAffinity(WindowsCoreMask(false));
 #endif
 }
 
@@ -563,6 +647,8 @@ void SetCurrentThreadToBackgroundWork() {
 #if defined(__ANDROID__)
     ADPF::AddCurrentThread(ADPF::Session::Background);
     SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
+#elif defined(_WIN32)
+    ApplyCurrentThreadAffinity(WindowsCoreMask(false));
 #endif
 }
 
@@ -570,6 +656,8 @@ void SetCurrentThreadToAllCores() {
 #if defined(__ANDROID__)
     ADPF::RemoveCurrentThread();
     SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
+#elif defined(_WIN32)
+    ApplyCurrentThreadAffinity(GetWindowsCoreMasks().all);
 #endif
 }
 
