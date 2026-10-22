@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 
 #include "common/alignment.h"
 #include "common/assert.h"
@@ -107,6 +108,7 @@ inline void MemoryManager::SetBigPageContinuous(size_t big_page_index, bool valu
 }
 
 GPUVAddr MemoryManager::PageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr dev_addr, size_t size, PTEKind kind, MemoryManager::EntryType entry_type) {
+    translation_generation.fetch_add(1, std::memory_order_release);
     [[maybe_unused]] u64 remaining_size{size};
     if (entry_type == EntryType::Mapped) {
         page_table.ReserveRange(gpu_addr, size);
@@ -127,10 +129,12 @@ GPUVAddr MemoryManager::PageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr de
         remaining_size -= page_size;
     }
     kind_map.Map(gpu_addr, gpu_addr + size, kind);
+    translation_generation.fetch_add(1, std::memory_order_release);
     return gpu_addr;
 }
 
 GPUVAddr MemoryManager::BigPageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr dev_addr, size_t size, PTEKind kind, MemoryManager::EntryType entry_type) {
+    translation_generation.fetch_add(1, std::memory_order_release);
     [[maybe_unused]] u64 remaining_size{size};
     for (u64 offset{}; offset < size; offset += big_page_size) {
         const GPUVAddr current_gpu_addr = gpu_addr + offset;
@@ -168,6 +172,7 @@ GPUVAddr MemoryManager::BigPageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr
         std::unique_lock<std::mutex> lock(guard);
         kind_map.Map(gpu_addr, gpu_addr + size, kind);
     }
+    translation_generation.fetch_add(1, std::memory_order_release);
     return gpu_addr;
 }
 
@@ -206,14 +211,76 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
     if (!IsWithinGPUAddressRange(gpu_addr)) [[unlikely]] {
         return std::nullopt;
     }
-    if (GetEntry(gpu_addr, true) != EntryType::Mapped) [[unlikely]] {
-        if (GetEntry(gpu_addr, false) != EntryType::Mapped)
-            return std::nullopt;
-        const DAddr dev_addr_base = DAddr(page_table[PageEntryIndex(gpu_addr, false)]) << cpu_page_bits;
-        return dev_addr_base + (gpu_addr & page_mask);
+    // Page keyed translation cache. Uniform/vertex/index buffers are re-bound on every draw
+    // but live in the same handful of pages, so caching the page -> host address mapping keeps
+    // the sparse page table lookups out of the per-draw path. The cache is thread local, the
+    // generation counter invalidates it whenever the page tables change.
+    struct CacheEntry {
+        u64 instance{};
+        u64 index{};
+        u64 base{};
+        u32 generation{};
+        bool mapped{};
+    };
+    static constexpr size_t kCacheEntries = 2048;
+    static thread_local std::array<CacheEntry, kCacheEntries> big_cache{};
+    static thread_local std::array<CacheEntry, kCacheEntries> short_cache{};
+
+    const u32 gen_start{translation_generation.load(std::memory_order_acquire)};
+    if ((gen_start & 1) != 0) [[unlikely]] {
+        if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
+            const size_t big_index{PageEntryIndex(gpu_addr, true)};
+            return (DAddr(big_page_table_dev[big_index]) << cpu_page_bits) + (gpu_addr & big_page_mask);
+        }
+        if (GetEntry(gpu_addr, false) == EntryType::Mapped) {
+            const size_t short_index{PageEntryIndex(gpu_addr, false)};
+            return (DAddr(page_table[short_index]) << cpu_page_bits) + (gpu_addr & page_mask);
+        }
+        return std::nullopt;
     }
-    const DAddr dev_addr_base = DAddr(big_page_table_dev[PageEntryIndex(gpu_addr, true)]) << cpu_page_bits;
-    return dev_addr_base + (gpu_addr & big_page_mask);
+
+    const size_t big_index{PageEntryIndex(gpu_addr, true)};
+    const size_t big_slot{(big_index ^ (big_index >> 11)) & (kCacheEntries - 1)};
+    CacheEntry& big_entry{big_cache[big_slot]};
+    if (big_entry.instance == unique_identifier && big_entry.generation == gen_start &&
+        big_entry.index == big_index) {
+        if (big_entry.mapped) {
+            return DAddr(big_entry.base) + (gpu_addr & big_page_mask);
+        }
+    } else {
+        if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
+            const DAddr dev_addr_base = DAddr(big_page_table_dev[big_index]) << cpu_page_bits;
+            if (translation_generation.load(std::memory_order_acquire) == gen_start) {
+                big_entry = CacheEntry{unique_identifier, big_index, dev_addr_base, gen_start, true};
+            }
+            return dev_addr_base + (gpu_addr & big_page_mask);
+        }
+        if (translation_generation.load(std::memory_order_acquire) == gen_start) {
+            big_entry = CacheEntry{unique_identifier, big_index, 0, gen_start, false};
+        }
+    }
+
+    const size_t short_index{PageEntryIndex(gpu_addr, false)};
+    const size_t short_slot{(short_index ^ (short_index >> 11)) & (kCacheEntries - 1)};
+    CacheEntry& short_entry{short_cache[short_slot]};
+    if (short_entry.instance == unique_identifier && short_entry.generation == gen_start &&
+        short_entry.index == short_index) {
+        if (!short_entry.mapped) {
+            return std::nullopt;
+        }
+        return DAddr(short_entry.base) + (gpu_addr & page_mask);
+    }
+    if (GetEntry(gpu_addr, false) != EntryType::Mapped) {
+        if (translation_generation.load(std::memory_order_acquire) == gen_start) {
+            short_entry = CacheEntry{unique_identifier, short_index, 0, gen_start, false};
+        }
+        return std::nullopt;
+    }
+    const DAddr dev_addr_base = DAddr(page_table[short_index]) << cpu_page_bits;
+    if (translation_generation.load(std::memory_order_acquire) == gen_start) {
+        short_entry = CacheEntry{unique_identifier, short_index, dev_addr_base, gen_start, true};
+    }
+    return dev_addr_base + (gpu_addr & page_mask);
 }
 
 std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr addr, std::size_t size) const {
@@ -581,6 +648,19 @@ bool MemoryManager::IsGranularRange(GPUVAddr gpu_addr, std::size_t size) const {
 }
 
 bool MemoryManager::IsContinuousRange(GPUVAddr gpu_addr, std::size_t size) const {
+    if (size == 0) {
+        return true;
+    }
+    if ((gpu_addr >> page_bits) == ((gpu_addr + size - 1) >> page_bits)) {
+        if (GpuToCpuAddress(gpu_addr).has_value()) {
+            return true;
+        }
+    }
+    if ((gpu_addr >> big_page_bits) == ((gpu_addr + size - 1) >> big_page_bits)) {
+        if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
+            return true;
+        }
+    }
     std::optional<DAddr> old_page_addr{};
     bool result{true};
     auto fail = [&]([[maybe_unused]] std::size_t page_index, [[maybe_unused]] std::size_t offset,

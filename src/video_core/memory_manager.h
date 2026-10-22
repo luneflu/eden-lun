@@ -216,6 +216,9 @@ private:
     Common::RangeMap<GPUVAddr, PTEKind> kind_map;
     Common::SparseLargeVector<u32> big_page_table_dev;
 
+    // Bumped whenever the page tables change, invalidating the address translation caches.
+    std::atomic<u32> translation_generation{0};
+
     std::vector<u64> big_page_continuous;
     boost::container::small_vector<std::pair<DAddr, std::size_t>, 32> page_stash{};
     boost::container::small_vector<std::pair<DAddr, std::size_t>, 32> page_stash2{};
