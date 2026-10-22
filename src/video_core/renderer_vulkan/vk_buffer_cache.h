@@ -63,6 +63,7 @@ public:
 
     void ResetUsageTracking() noexcept {
         tracker.Reset();
+        tracked_count = 0;
     }
 
     [[nodiscard]] u64 LastUsageTick() const noexcept {
@@ -88,6 +89,12 @@ private:
     VideoCommon::UsageTracker tracker;
     VkDeviceAddress device_address{};
     u64 last_usage_tick{};
+    struct TrackedRange {
+        u64 offset{};
+        u64 size{};
+    };
+    std::array<TrackedRange, 4> tracked_ranges{};
+    u8 tracked_count{};
     bool is_null{};
     bool sparse_compatible{};
 };

@@ -120,7 +120,18 @@ Buffer::Buffer(BufferCacheRuntime& runtime, DAddr cpu_addr_, u64 size_bytes_,
 }
 
 void Buffer::MarkUsage(u64 offset, u64 size) noexcept {
+    for (u8 i = 0; i < tracked_count; ++i) {
+        if (tracked_ranges[i].offset == offset && tracked_ranges[i].size == size) {
+            last_usage_tick = scheduler->CurrentTick();
+            return;
+        }
+    }
     tracker.Track(offset, size);
+    if (tracked_count < 4) {
+        tracked_ranges[tracked_count++] = {offset, size};
+    } else {
+        tracked_ranges[0] = {offset, size};
+    }
     last_usage_tick = scheduler->CurrentTick();
 }
 
