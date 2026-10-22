@@ -327,7 +327,9 @@ size_t ComputePipelineCacheKey::Hash() const noexcept {
 }
 
 bool ComputePipelineCacheKey::operator==(const ComputePipelineCacheKey& rhs) const noexcept {
-    return std::memcmp(&rhs, this, sizeof *this) == 0;
+    return unique_hash == rhs.unique_hash &&
+           shared_memory_size == rhs.shared_memory_size &&
+           workgroup_size == rhs.workgroup_size;
 }
 
 size_t GraphicsPipelineCacheKey::Hash() const noexcept {
@@ -336,7 +338,23 @@ size_t GraphicsPipelineCacheKey::Hash() const noexcept {
 }
 
 bool GraphicsPipelineCacheKey::operator==(const GraphicsPipelineCacheKey& rhs) const noexcept {
-    return std::memcmp(&rhs, this, Size()) == 0;
+    if (this == &rhs) {
+        return true;
+    }
+    if (unique_hashes != rhs.unique_hashes) {
+        return false;
+    }
+    if (state.raw1 != rhs.state.raw1 || state.raw2 != rhs.state.raw2) {
+        return false;
+    }
+    const size_t size = Size();
+    if (size != rhs.Size()) {
+        return false;
+    }
+    constexpr size_t header_size = sizeof(unique_hashes) + 8;
+    return std::memcmp(reinterpret_cast<const char*>(this) + header_size,
+                       reinterpret_cast<const char*>(&rhs) + header_size,
+                       size - header_size) == 0;
 }
 
 PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,

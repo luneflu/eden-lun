@@ -384,7 +384,19 @@ size_t FixedPipelineState::Hash() const noexcept {
 }
 
 bool FixedPipelineState::operator==(const FixedPipelineState& rhs) const noexcept {
-    return std::memcmp(this, &rhs, Size()) == 0;
+    if (this == &rhs) {
+        return true;
+    }
+    if (raw1 != rhs.raw1 || raw2 != rhs.raw2) {
+        return false;
+    }
+    const size_t size = Size();
+    if (size != rhs.Size()) {
+        return false;
+    }
+    return std::memcmp(reinterpret_cast<const char*>(this) + 8,
+                       reinterpret_cast<const char*>(&rhs) + 8,
+                       size - 8) == 0;
 }
 
 u32 FixedPipelineState::PackComparisonOp(Maxwell::ComparisonOp op) noexcept {

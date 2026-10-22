@@ -115,8 +115,16 @@ public:
             return this;
         }
         const auto it{std::find(transition_keys.begin(), transition_keys.end(), current_key)};
-        return it != transition_keys.end() ? transitions[std::distance(transition_keys.begin(), it)]
-                                           : nullptr;
+        if (it != transition_keys.end()) {
+            const size_t idx = static_cast<size_t>(std::distance(transition_keys.begin(), it));
+            GraphicsPipeline* const res = transitions[idx];
+            if (idx > 0) {
+                std::swap(transition_keys[idx], transition_keys[0]);
+                std::swap(transitions[idx], transitions[0]);
+            }
+            return res;
+        }
+        return nullptr;
     }
 
     [[nodiscard]] bool IsBuilt() const noexcept {
