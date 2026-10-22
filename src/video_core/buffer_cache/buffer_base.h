@@ -102,6 +102,7 @@ public:
     }
 
     DAddr cpu_addr_cached = 0;
+    u64 lru_touch_frame = 0;
 
     /// Returns the offset relative to the given CPU address
     /// @pre IsInBounds returns true
