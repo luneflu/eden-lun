@@ -17,9 +17,12 @@
 #endif
 
 #include "zstd.h"
+#pragma warning(push)
+#pragma warning(disable:4505)
 #define g_ZSTD_threading_useless_symbol g_ZSTD_zbic_threading_useless_symbol
 #include "zstd.c"
 #undef g_ZSTD_threading_useless_symbol
+#pragma warning(pop)
 
 namespace Common::Compression {
 

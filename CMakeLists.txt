@@ -194,6 +194,11 @@ endif()
 
 # Set runtime library to MD/MDd for all configurations
 if(MSVC)
+    # MSVC defaults to SSE2; texture decoding and the shader recompiler are SIMD-bound
+    option(EDEN_ARCH_AVX2 "Compile with /arch:AVX2" ON)
+    if (EDEN_ARCH_AVX2)
+        add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/arch:AVX2>)
+    endif()
     if (YUZU_USE_BUNDLED_QT AND ARCHITECTURE_arm64)
         set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         set(libflag MT)
