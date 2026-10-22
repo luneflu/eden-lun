@@ -179,6 +179,9 @@ struct WordManager {
                 if (type == Type::CPU)
                     cached_words[index] &= ~word;
             }
+            if (word == 0) {
+                return;
+            }
             const size_t base_offset = index * PAGES_PER_WORD;
             IteratePages(word, [&](size_t pages_offset, size_t pages_size) {
                 if (!pending) {
@@ -268,6 +271,9 @@ struct WordManager {
     /// @tparam add_to_tracker True when the tracker should start tracking the new pages
     void CollectChangedRanges(bool add_to_tracker, u64 word_index, u64 current_bits, u64 new_bits, std::vector<std::pair<VAddr, u64>>& out_ranges) const {
         u64 changed_bits = (add_to_tracker ? current_bits : ~current_bits) & new_bits;
+        if (changed_bits == 0) {
+            return;
+        }
         VAddr addr = cpu_addr + word_index * BYTES_PER_WORD;
         IteratePages(changed_bits, [&](size_t offset, size_t size) {
             out_ranges.emplace_back(addr + offset * BYTES_PER_PAGE, size * BYTES_PER_PAGE);
