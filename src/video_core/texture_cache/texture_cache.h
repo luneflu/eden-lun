@@ -313,14 +313,17 @@ SamplerId TextureCache<P>::GetSamplerId(u32 index, bool compute) {
         LOG_DEBUG(HW_GPU, "Invalid sampler index={}", index);
         return NULL_SAMPLER_ID;
     }
-    auto const map_index = index | (compute ? Common::SlotId::TAGGED_VALUE : 0);
+    auto& sampler_ids = compute ? channel_state->compute_sampler_ids : channel_state->graphics_sampler_ids;
+    if (index >= sampler_ids.size()) {
+        sampler_ids.resize(std::max<size_t>(index + 1, table.current_limit + 1), NULL_SAMPLER_ID);
+    }
     auto const [descriptor, is_new] = table.Read(*gpu_memory, index);
     if (is_new) {
         auto const id = FindSampler(descriptor, compute);
-        channel_state->sampler_ids.insert_or_assign(map_index, id);
+        sampler_ids[index] = id;
         return id;
     }
-    return channel_state->sampler_ids.find(map_index)->second;
+    return sampler_ids[index];
 }
 
 template <class P>
@@ -463,12 +466,32 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
     using namespace VideoCommon::Dirty;
     auto& flags = maxwell3d->dirty.flags;
     if (!flags[Dirty::RenderTargets]) {
-        for (size_t index = 0; index < NUM_RT; ++index) {
-            ImageViewId& color_buffer_id = render_targets.color_buffer_ids[index];
-            PrepareImageView(color_buffer_id, true, is_clear && IsFullClear(color_buffer_id));
+        if (is_clear) [[unlikely]] {
+            for (size_t index = 0; index < NUM_RT; ++index) {
+                ImageViewId& color_buffer_id = render_targets.color_buffer_ids[index];
+                PrepareImageView(color_buffer_id, true, IsFullClear(color_buffer_id));
+            }
+            const ImageViewId depth_buffer_id = render_targets.depth_buffer_id;
+            PrepareImageView(depth_buffer_id, true, IsFullClear(depth_buffer_id));
+            return;
         }
-        const ImageViewId depth_buffer_id = render_targets.depth_buffer_id;
-        PrepareImageView(depth_buffer_id, true, is_clear && IsFullClear(depth_buffer_id));
+        u32 mask = rt_active_mask;
+        while (mask) {
+            const u32 i = std::countr_zero(mask);
+            mask &= mask - 1;
+            const ImageId id = (i == NUM_RT) ? rt_depth_image_id : rt_image_id[i];
+            Image& image = slot_images[id];
+            if (False(image.flags & (ImageFlagBits::CpuModified | ImageFlagBits::Alias))) {
+                image.flags |= ImageFlagBits::GpuModified;
+                image.modification_tick = ++modification_tick;
+                if (image.lru_touch_frame != frame_tick) {
+                    image.lru_touch_frame = frame_tick;
+                    lru_cache.Touch(image.lru_index, frame_tick);
+                }
+            } else {
+                PrepareImage(id, true, false);
+            }
+        }
         return;
     }
 
@@ -543,8 +566,10 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
         LOG_DEBUG(HW_GPU, "Invalid image view index={}", index);
         return NULL_IMAGE_VIEW_ID;
     }
-    auto const map_index = index | (compute ? Common::SlotId::TAGGED_VALUE : 0);
-    // Is new (on the tegra engine side)?
+    auto& view_ids = compute ? channel_state->compute_image_view_ids : channel_state->graphics_image_view_ids;
+    if (index >= view_ids.size()) {
+        view_ids.resize(std::max<size_t>(index + 1, table.current_limit + 1), NULL_IMAGE_VIEW_ID);
+    }
     auto const [descriptor, is_new] = table.Read(*gpu_memory, index);
     if (is_new) {
         if (IsValidEntry(*gpu_memory, descriptor)) {
@@ -553,16 +578,16 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
             if (is_new_tc)
                 pair->second = CreateImageView(descriptor);
             PrepareImageView(pair->second, false, false);
-            channel_state->image_view_ids.insert_or_assign(map_index, pair->second);
+            view_ids[index] = pair->second;
             return pair->second;
         }
-        channel_state->image_view_ids.insert_or_assign(map_index, NULL_IMAGE_VIEW_ID);
+        view_ids[index] = NULL_IMAGE_VIEW_ID;
         return NULL_IMAGE_VIEW_ID;
     }
-    auto const it = channel_state->image_view_ids.find(map_index);
-    if (it->second != NULL_IMAGE_VIEW_ID)
-        PrepareImageView(it->second, false, false);
-    return it->second;
+    const ImageViewId image_view_id = view_ids[index];
+    if (image_view_id != NULL_IMAGE_VIEW_ID)
+        PrepareImageView(image_view_id, false, false);
+    return image_view_id;
 }
 
 template <class P>
@@ -1319,9 +1344,10 @@ void TextureCache<P>::InvalidateScale(Image& image) {
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
 
-        if constexpr (ENABLE_VALIDATION)
-            for (auto& e : channel_info.image_view_ids)
-                e.second = CORRUPT_ID;
+        if constexpr (ENABLE_VALIDATION) {
+            std::ranges::fill(channel_info.graphics_image_view_ids, CORRUPT_ID);
+            std::ranges::fill(channel_info.compute_image_view_ids, CORRUPT_ID);
+        }
         channel_info.graphics_image_table.Invalidate();
         channel_info.compute_image_table.Invalidate();
     }
@@ -2396,9 +2422,10 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     }
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
-        if constexpr (ENABLE_VALIDATION)
-            for (auto& e : channel_info.image_view_ids)
-                e.second = CORRUPT_ID;
+        if constexpr (ENABLE_VALIDATION) {
+            std::ranges::fill(channel_info.graphics_image_view_ids, CORRUPT_ID);
+            std::ranges::fill(channel_info.compute_image_view_ids, CORRUPT_ID);
+        }
         channel_info.graphics_image_table.Invalidate();
         channel_info.compute_image_table.Invalidate();
     }

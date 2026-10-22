@@ -87,8 +87,10 @@ public:
     std::unordered_map<TICEntry, ImageViewId> image_views;
     std::unordered_map<TSCEntry, SamplerId> samplers;
 
-    ::Common::unordered_map<u32, SamplerId> sampler_ids;
-    ::Common::unordered_map<u32, ImageViewId> image_view_ids;
+    std::vector<SamplerId> graphics_sampler_ids;
+    std::vector<SamplerId> compute_sampler_ids;
+    std::vector<ImageViewId> graphics_image_view_ids;
+    std::vector<ImageViewId> compute_image_view_ids;
 
     TextureCacheGPUMap* gpu_page_table = nullptr;
     TextureCacheGPUMap* sparse_page_table = nullptr;
