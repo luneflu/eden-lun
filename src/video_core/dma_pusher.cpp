@@ -183,7 +183,7 @@ void DmaPusher::CallMethod(u32 argument) {
     } else {
         auto subchannel = subchannels[dma_state.subchannel];
         if (!subchannel->execution_mask[dma_state.method]) {
-            subchannel->method_sink.emplace_back(dma_state.method, argument);
+            subchannel->PushMethod(dma_state.method, argument);
         } else {
             subchannel->ConsumeSink(system);
             subchannel->current_dma_segment = dma_state.dma_get + dma_state.dma_word_offset;
