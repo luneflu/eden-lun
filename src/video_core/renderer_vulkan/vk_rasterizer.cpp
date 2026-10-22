@@ -1881,9 +1881,7 @@ void RasterizerVulkan::UpdateStencilTestEnable(Tegra::Engines::Maxwell3D::Regs& 
 
 void RasterizerVulkan::UpdateVertexInput(Tegra::Engines::Maxwell3D::Regs& regs) {
     auto& dirty{maxwell3d->dirty.flags};
-    const bool vertex_input_dirty = dirty[Dirty::VertexInput];
-    const bool vertex_buffers_dirty = dirty[VideoCommon::Dirty::VertexBuffers];
-    if (!vertex_input_dirty && !vertex_buffers_dirty) {
+    if (!dirty[Dirty::VertexInput]) {
         return;
     }
     dirty[Dirty::VertexInput] = false;
@@ -1935,7 +1933,8 @@ void RasterizerVulkan::UpdateVertexInput(Tegra::Engines::Maxwell3D::Regs& regs) 
         dirty[Dirty::VertexBinding0 + index] = false;
     }
 
-    scheduler.Record([bindings, attributes](vk::CommandBuffer cmdbuf) {
+    scheduler.Record([bindings = std::move(bindings), attributes = std::move(attributes)](
+                         vk::CommandBuffer cmdbuf) {
         cmdbuf.SetVertexInputEXT(bindings, attributes);
     });
 }
