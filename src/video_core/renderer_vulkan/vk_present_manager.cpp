@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+
 #include "common/settings.h"
 #include "common/thread.h"
 #include "core/frontend/emu_window.h"
@@ -187,6 +189,20 @@ Frame* PresentManager::GetRenderFrame() {
 }
 
 void PresentManager::Present(Frame* frame) {
+    // TEMP instrumentation: count the present requests of the guest.
+    {
+        static u64 requests{};
+        static auto last_time{std::chrono::steady_clock::now()};
+        ++requests;
+        const auto now = std::chrono::steady_clock::now();
+        const double seconds = std::chrono::duration<double>(now - last_time).count();
+        if (seconds >= 1.0) {
+            LOG_INFO(Render_Vulkan, "PresentReq: requests={} req/s={:.2}", requests,
+                     static_cast<double>(requests) / seconds);
+            requests = 0;
+            last_time = now;
+        }
+    }
     if (use_present_thread) {
         scheduler.Record([this, frame](vk::CommandBuffer) {
             std::unique_lock lock{queue_mutex};
@@ -583,6 +599,23 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
 
     // Present
     swapchain.Present(render_semaphore);
+
+    // TEMP instrumentation: frame counter and frame rate.
+    {
+        static u64 frame_count{};
+        static u64 last_count{};
+        static auto last_time{std::chrono::steady_clock::now()};
+        ++frame_count;
+        const auto now = std::chrono::steady_clock::now();
+        const double seconds = std::chrono::duration<double>(now - last_time).count();
+        if (seconds >= 1.0) {
+            LOG_INFO(Render_Vulkan, "FrameStat: frames={} fps={:.2} ms/frame={:.2}", frame_count,
+                     static_cast<double>(frame_count - last_count) / seconds,
+                     1000.0 * seconds / static_cast<double>(frame_count - last_count));
+            last_count = frame_count;
+            last_time = now;
+        }
+    }
 }
 
 } // namespace Vulkan
