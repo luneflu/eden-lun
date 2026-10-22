@@ -299,6 +299,9 @@ void Maxwell3D::ConsumeSinkImpl(Core::System& system) {
 }
 
 void Maxwell3D::ProcessDirtyRegisters(u32 method, u32 argument) {
+    if (regs.reg_array[method] == argument) {
+        return;
+    }
     regs.reg_array[method] = argument;
     for (auto const& table : dirty.tables)
         dirty.flags[table[method]] = true;
