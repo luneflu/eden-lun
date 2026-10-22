@@ -597,8 +597,37 @@ size_t MemoryManager::MaxContinuousRange(GPUVAddr gpu_addr, size_t size) const {
 }
 
 size_t MemoryManager::GetMemoryLayoutSize(GPUVAddr gpu_addr, size_t max_size) const {
+    struct RangeEntry {
+        u64 instance{};
+        GPUVAddr start{};
+        GPUVAddr end{};
+        u32 generation{};
+    };
+    static constexpr size_t kRangeEntries = 64;
+    static thread_local std::array<RangeEntry, kRangeEntries> range_cache{};
+    const u32 generation = translation_generation.load(std::memory_order_acquire);
+
+    if ((generation & 1) == 0) {
+        const size_t slot = (gpu_addr >> page_bits) & (kRangeEntries - 1);
+        const auto& entry = range_cache[slot];
+        if (entry.instance == unique_identifier && entry.generation == generation &&
+            gpu_addr >= entry.start && gpu_addr < entry.end) {
+            return static_cast<size_t>(entry.end - gpu_addr);
+        }
+    }
+
     std::unique_lock<std::mutex> lock(guard);
-    return kind_map.GetContinuousSizeFrom(gpu_addr);
+    const size_t size = kind_map.GetContinuousSizeFrom(gpu_addr);
+    if ((generation & 1) == 0 && size > 0) {
+        const size_t slot = (gpu_addr >> page_bits) & (kRangeEntries - 1);
+        range_cache[slot] = RangeEntry{
+            .instance = unique_identifier,
+            .start = gpu_addr,
+            .end = gpu_addr + size,
+            .generation = generation,
+        };
+    }
+    return size;
 }
 
 void MemoryManager::InvalidateRegion(GPUVAddr gpu_addr, size_t size,
