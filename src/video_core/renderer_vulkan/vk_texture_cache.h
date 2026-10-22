@@ -561,6 +561,8 @@ private:
 
     CustomBorderColorBudget custom_border_color_budget;
     std::vector<Variant> variants;
+    VariantKey last_key{};
+    VkSampler last_sampler{VK_NULL_HANDLE};
 
     const Device* device_ptr{nullptr};
     VkSamplerCreateInfo base_ci{};

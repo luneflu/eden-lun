@@ -2943,10 +2943,18 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth) {
         key.srgb_border = false;
         key.swizzle = {};
     }
+    if (last_sampler != VK_NULL_HANDLE && key == last_key) [[likely]] {
+        return last_sampler;
+    }
     if (const VkSampler existing = Find(key); existing != VK_NULL_HANDLE) {
+        last_key = key;
+        last_sampler = existing;
         return existing;
     }
-    return Emplace(key);
+    const VkSampler created = Emplace(key);
+    last_key = key;
+    last_sampler = created;
+    return created;
 }
 
 Framebuffer::Framebuffer(TextureCacheRuntime& runtime, std::span<ImageView*, NUM_RT> color_buffers,
