@@ -101,6 +101,16 @@ void RefreshXfbState(VideoCommon::TransformFeedbackState& state, const Maxwell& 
 }
 } // Anonymous namespace
 
+static constexpr u32 MakeBaseRaw1(const DynamicFeatures& features) {
+    return (features.has_extended_dynamic_state ? 1u : 0u) |
+           ((features.has_extended_dynamic_state_2 ? 1u : 0u) << 1) |
+           ((features.has_extended_dynamic_state_2_logic_op ? 1u : 0u) << 2) |
+           ((features.has_extended_dynamic_state_3_blend ? 1u : 0u) << 3) |
+           ((features.has_extended_dynamic_state_3_enables ? 1u : 0u) << 4) |
+           ((features.has_dynamic_vertex_input ? 1u : 0u) << 5) |
+           ((features.has_color_write_enable ? 1u : 0u) << 20);
+}
+
 void FixedPipelineState::Refresh(Tegra::Engines::Maxwell3D& maxwell3d, DynamicFeatures& features) {
     const Maxwell& regs = maxwell3d.regs;
     const auto topology_ = maxwell3d.draw_manager.draw_state.topology;
@@ -108,67 +118,53 @@ void FixedPipelineState::Refresh(Tegra::Engines::Maxwell3D& maxwell3d, DynamicFe
     driver_id = features.driver_id;
     driver_version = features.driver_version;
 
-    raw1 = 0;
-    extended_dynamic_state.Assign(features.has_extended_dynamic_state ? 1 : 0);
-    extended_dynamic_state_2.Assign(features.has_extended_dynamic_state_2 ? 1 : 0);
-    extended_dynamic_state_2_logic_op.Assign(features.has_extended_dynamic_state_2_logic_op ? 1 : 0);
-    extended_dynamic_state_3_blend.Assign(features.has_extended_dynamic_state_3_blend ? 1 : 0);
-    extended_dynamic_state_3_enables.Assign(features.has_extended_dynamic_state_3_enables ? 1 : 0);
-    color_write_enable_dynamic.Assign(features.has_color_write_enable ? 1 : 0);
-    dynamic_vertex_input.Assign(features.has_dynamic_vertex_input ? 1 : 0);
-    xfb_enabled.Assign(regs.transform_feedback_enabled != 0);
-    ndc_minus_one_to_one.Assign(regs.depth_mode == Maxwell::DepthMode::MinusOneToOne ? 1 : 0);
-    polygon_mode.Assign(PackPolygonMode(regs.polygon_mode_front));
-    tessellation_primitive.Assign(static_cast<u32>(regs.tessellation.params.domain_type.Value()));
-    tessellation_spacing.Assign(static_cast<u32>(regs.tessellation.params.spacing.Value()));
-    tessellation_clockwise.Assign(regs.tessellation.params.output_primitives.Value() ==
-                                  Maxwell::Tessellation::OutputPrimitives::Triangles_CW);
-    patch_control_points_minus_one.Assign(regs.patch_vertices - 1);
     const bool can_collapse_topology_class =
         features.has_extended_dynamic_state && features.has_extended_dynamic_state_2;
-    topology.Assign(can_collapse_topology_class
+    const auto packed_topology = can_collapse_topology_class
                         ? TOPOLOGY_CLASS_REPRESENTATIVE_LUT[static_cast<size_t>(topology_)]
-                        : topology_);
-    msaa_mode.Assign(regs.anti_alias_samples_mode);
-    attachment0_dual_source_blend.Assign(ComputeAttachment0DualSourceBlend(regs) ? 1 : 0);
+                        : topology_;
 
-    raw2 = 0;
+    raw1 = MakeBaseRaw1(features) |
+           ((regs.transform_feedback_enabled != 0 ? 1u : 0u) << 6) |
+           ((regs.depth_mode == Maxwell::DepthMode::MinusOneToOne ? 1u : 0u) << 7) |
+           ((PackPolygonMode(regs.polygon_mode_front) & 3u) << 8) |
+           ((static_cast<u32>(regs.tessellation.params.domain_type.Value()) & 3u) << 10) |
+           ((static_cast<u32>(regs.tessellation.params.spacing.Value()) & 3u) << 12) |
+           ((regs.tessellation.params.output_primitives.Value() ==
+             Maxwell::Tessellation::OutputPrimitives::Triangles_CW ? 1u : 0u) << 14) |
+           (((regs.patch_vertices - 1) & 0x1fu) << 15) |
+           ((ComputeAttachment0DualSourceBlend(regs) ? 1u : 0u) << 21) |
+           ((static_cast<u32>(packed_topology) & 0xfu) << 24) |
+           ((static_cast<u32>(regs.anti_alias_samples_mode) & 0xfu) << 28);
 
     const auto test_func =
         regs.alpha_test_enabled != 0 ? regs.alpha_test_func : Maxwell::ComparisonOp::Always_GL;
-    alpha_test_func.Assign(PackComparisonOp(test_func));
-    early_z.Assign(regs.mandated_early_z != 0 ? 1 : 0);
-    depth_enabled.Assign(regs.zeta_enable != 0 ? 1 : 0);
-    depth_format.Assign(static_cast<u32>(regs.zeta.format));
-    y_negate.Assign(regs.window_origin.mode != Maxwell::WindowOrigin::Mode::UpperLeft ? 1 : 0);
 
     bool use_last_provoking_vertex = false;
-    const bool provoking_vertex_available = features.has_provoking_vertex;
-    const bool supports_first_mode = features.has_provoking_vertex_first_mode;
-    const bool supports_last_mode = features.has_provoking_vertex_last_mode;
-    const bool transform_feedback_active = regs.transform_feedback_enabled != 0;
-    const bool tf_preserves_provoking_vertex = features.has_provoking_vertex_tf_preserve;
-
-    if (provoking_vertex_available && (supports_first_mode || supports_last_mode)) {
+    if (features.has_provoking_vertex &&
+        (features.has_provoking_vertex_first_mode || features.has_provoking_vertex_last_mode)) {
         use_last_provoking_vertex = regs.provoking_vertex == Maxwell::ProvokingVertex::Last;
-
-        if (transform_feedback_active && !tf_preserves_provoking_vertex) {
+        if (regs.transform_feedback_enabled != 0 && !features.has_provoking_vertex_tf_preserve) {
             use_last_provoking_vertex = false;
         }
-
-        if (use_last_provoking_vertex && !supports_last_mode) {
+        if (use_last_provoking_vertex && !features.has_provoking_vertex_last_mode) {
             use_last_provoking_vertex = false;
-        } else if (!use_last_provoking_vertex && !supports_first_mode) {
+        } else if (!use_last_provoking_vertex && !features.has_provoking_vertex_first_mode) {
             use_last_provoking_vertex = true;
         }
     }
 
-    provoking_vertex_last.Assign(use_last_provoking_vertex ? 1 : 0);
-    conservative_raster_enable.Assign(regs.conservative_raster_enable != 0 ? 1 : 0);
-    smooth_lines.Assign(regs.line_anti_alias_enable != 0 ? 1 : 0);
-    alpha_to_coverage_enabled.Assign(regs.anti_alias_alpha_control.alpha_to_coverage != 0 ? 1 : 0);
-    alpha_to_one_enabled.Assign(regs.anti_alias_alpha_control.alpha_to_one != 0 ? 1 : 0);
-    app_stage.Assign(maxwell3d.engine_state);
+    raw2 = ((PackComparisonOp(test_func) & 7u) << 1) |
+           ((regs.mandated_early_z != 0 ? 1u : 0u) << 4) |
+           ((regs.zeta_enable != 0 ? 1u : 0u) << 5) |
+           ((static_cast<u32>(regs.zeta.format) & 0x1fu) << 6) |
+           ((regs.window_origin.mode != Maxwell::WindowOrigin::Mode::UpperLeft ? 1u : 0u) << 11) |
+           ((use_last_provoking_vertex ? 1u : 0u) << 12) |
+           ((regs.conservative_raster_enable != 0 ? 1u : 0u) << 13) |
+           ((regs.line_anti_alias_enable != 0 ? 1u : 0u) << 14) |
+           ((regs.anti_alias_alpha_control.alpha_to_coverage != 0 ? 1u : 0u) << 15) |
+           ((regs.anti_alias_alpha_control.alpha_to_one != 0 ? 1u : 0u) << 16) |
+           ((static_cast<u32>(maxwell3d.engine_state) & 7u) << 17);
 
     depth_bounds_min = static_cast<u32>(regs.depth_bounds[0]);
     depth_bounds_max = static_cast<u32>(regs.depth_bounds[1]);
