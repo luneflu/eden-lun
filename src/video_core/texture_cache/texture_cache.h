@@ -481,7 +481,7 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
             mask &= mask - 1;
             const ImageId id = (i == NUM_RT) ? rt_depth_image_id : rt_image_id[i];
             Image& image = slot_images[id];
-            if (False(image.flags & (ImageFlagBits::CpuModified | ImageFlagBits::Alias))) {
+            if (False(image.flags & ImageFlagBits::CpuModified) && image.aliased_images.empty()) {
                 image.flags |= ImageFlagBits::GpuModified;
                 image.modification_tick = ++modification_tick;
                 if (image.lru_touch_frame != frame_tick) {
@@ -2393,6 +2393,11 @@ void TextureCache<P>::UntrackImage(ImageBase& image, ImageId image_id) {
 template <class P>
 void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     ImageBase& image = slot_images[image_id];
+    if (image_id == rt_depth_image_id ||
+        std::ranges::find(rt_image_id, image_id) != rt_image_id.end()) {
+        // The render target fast path indexes slot_images directly, so force a rebuild.
+        maxwell3d->dirty.flags[VideoCommon::Dirty::RenderTargets] = true;
+    }
     if (image.HasScaled()) {
         total_used_memory -= GetScaledImageSizeBytes(image);
     }
