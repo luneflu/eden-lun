@@ -298,6 +298,24 @@ void Maxwell3D::PushMethod(u32 method, u32 argument) {
     }
 }
 
+void Maxwell3D::PushMethodRun(u32 method, const u32* arguments, u32 count) {
+    const auto control = shadow_state.shadow_ram_control;
+    if (control == Regs::ShadowRamControl::Passthrough) [[likely]] {
+        for (u32 i = 0; i < count; ++i) {
+            ProcessDirtyRegisters(method + i, arguments[i]);
+        }
+    } else if (control == Regs::ShadowRamControl::Track || control == Regs::ShadowRamControl::TrackWithFilter) {
+        for (u32 i = 0; i < count; ++i) {
+            shadow_state.reg_array[method + i] = arguments[i];
+            ProcessDirtyRegisters(method + i, arguments[i]);
+        }
+    } else {
+        for (u32 i = 0; i < count; ++i) {
+            method_sink.emplace_back(method + i, arguments[i]);
+        }
+    }
+}
+
 void Maxwell3D::ConsumeSinkImpl(Core::System& system) {
     const auto control = shadow_state.shadow_ram_control;
     if (control == Regs::ShadowRamControl::Track || control == Regs::ShadowRamControl::TrackWithFilter) {

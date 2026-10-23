@@ -3134,6 +3134,8 @@ public:
 
     void PushMethod(u32 method, u32 argument) override;
 
+    void PushMethodRun(u32 method, const u32* arguments, u32 count) override;
+
     /// Write multiple values to the register identified by method.
     void CallMultiMethod(Core::System& system, u32 method, const u32* base_start, u32 amount, u32 methods_pending) override;
 

@@ -123,6 +123,27 @@ void DmaPusher::ProcessCommands(std::span<const CommandHeader> commands) {
             dma_state.is_last_call = true;
             index += max_write;
         } else if (dma_state.method_count) {
+            auto const& run_header = commands[index];
+            // Coalesce a run of non-executable register writes into one virtual call.
+            if (dma_state.method >= non_puller_methods) {
+                auto subchannel = subchannels[dma_state.subchannel];
+                const u32 method = dma_state.method;
+                const u32 available =
+                    u32(std::min<std::size_t>(dma_state.method_count, commands.size() - index));
+                u32 run = 0;
+                while (run < available && !subchannel->execution_mask[method + run]) {
+                    ++run;
+                }
+                if (run > 1) {
+                    dma_state.dma_word_offset = u32(index * sizeof(u32));
+                    subchannel->PushMethodRun(method, &run_header.argument, run);
+                    dma_state.method = method + run;
+                    dma_state.method_count -= run;
+                    dma_state.is_last_call = dma_state.method_count <= 1;
+                    index += run;
+                    continue;
+                }
+            }
             auto const command_header = commands[index]; //can copy
             dma_state.dma_word_offset = u32(index * sizeof(u32));
             dma_state.is_last_call = dma_state.method_count <= 1;

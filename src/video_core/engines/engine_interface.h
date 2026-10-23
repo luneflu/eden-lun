@@ -41,6 +41,13 @@ public:
         method_sink.emplace_back(method, argument);
     }
 
+    /// Write a run of consecutive non-executable methods starting at the given method index.
+    virtual void PushMethodRun(u32 method, const u32* arguments, u32 count) {
+        for (u32 i = 0; i < count; ++i) {
+            PushMethod(method + i, arguments[i]);
+        }
+    }
+
     void ConsumeSink(Core::System& system) {
         if (!method_sink.empty()) {
             ConsumeSinkImpl(system);
