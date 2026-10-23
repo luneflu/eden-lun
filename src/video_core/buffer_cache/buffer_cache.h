@@ -1756,6 +1756,9 @@ bool BufferCache<P>::SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 si
         total_size_bytes += range_size;
         largest_copy = (std::max)(largest_copy, range_size);
     };
+    if (!memory_tracker.IsRegionCpuModified(device_addr, size)) {
+        return true;
+    }
     memory_tracker.ForEachUploadRange(device_addr, size, [&](u64 device_addr_out, u64 range_size) {
         DAddr upload_start = device_addr_out;
         gpu_modified_ranges.ForEachInRange(device_addr_out, range_size, [&](DAddr gpu_start, DAddr gpu_end) {
