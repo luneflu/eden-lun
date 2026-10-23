@@ -39,7 +39,14 @@ public:
         std::pair<T, bool> result;
         gpu_memory.ReadBlockUnsafe(gpu_addr, std::addressof(result.first), sizeof(T));
         if ((read_descriptors[index / 64] & (1ULL << (index % 64))) != 0) {
-            result.second = result.first != descriptors[index];
+            if constexpr (sizeof(T) == 32 && alignof(T) >= 8 && std::is_trivially_copyable_v<T>) {
+                const auto* lhs = reinterpret_cast<const u64*>(std::addressof(result.first));
+                const auto* rhs = reinterpret_cast<const u64*>(std::addressof(descriptors[index]));
+                result.second = ((lhs[0] ^ rhs[0]) | (lhs[1] ^ rhs[1]) |
+                                 (lhs[2] ^ rhs[2]) | (lhs[3] ^ rhs[3])) != 0;
+            } else {
+                result.second = result.first != descriptors[index];
+            }
         } else {
             read_descriptors[index / 64] |= 1ULL << (index % 64);
             result.second = true;

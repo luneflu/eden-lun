@@ -452,6 +452,21 @@ void MemoryManager::ReadBlockImpl(GPUVAddr gpu_src_addr, void* dest_buffer, std:
         GPUVAddr base = (page_index << big_page_bits) + offset;
         MemoryOperation(base, copy_amount, false, mapped_normal, set_to_zero, set_to_zero);
     };
+    // Small single-big-page reads are the common case for descriptor tables; skip the
+    // page-walking machinery entirely when the whole range is inside one continuous big page.
+    if (unsafe && size != 0 && size <= page_size &&
+        (gpu_src_addr >> big_page_bits) == ((gpu_src_addr + size - 1) >> big_page_bits)) {
+        const size_t big_index = PageEntryIndex(gpu_src_addr, true);
+        if (GetEntry(gpu_src_addr, true) == EntryType::Mapped && IsBigPageContinuous(big_index)) {
+            const DAddr host_addr =
+                (DAddr(big_page_table_dev[big_index]) << cpu_page_bits) + (gpu_src_addr & big_page_mask);
+            const u8* physical = memory.GetPointer<u8>(host_addr);
+            if (physical != nullptr) {
+                std::memcpy(dest_buffer, physical, size);
+                return;
+            }
+        }
+    }
     MemoryOperation(gpu_src_addr, size, true, mapped_big, set_to_zero, read_short_pages);
 }
 
