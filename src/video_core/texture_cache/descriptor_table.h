@@ -7,6 +7,9 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <cstring>
+#include <type_traits>
 #include <vector>
 
 #include "common/alignment.h"
@@ -40,8 +43,10 @@ public:
         gpu_memory.ReadBlockUnsafe(gpu_addr, std::addressof(result.first), sizeof(T));
         if ((read_descriptors[index / 64] & (1ULL << (index % 64))) != 0) {
             if constexpr (sizeof(T) == 32 && alignof(T) >= 8 && std::is_trivially_copyable_v<T>) {
-                const auto* lhs = reinterpret_cast<const u64*>(std::addressof(result.first));
-                const auto* rhs = reinterpret_cast<const u64*>(std::addressof(descriptors[index]));
+                std::array<u64, 4> lhs;
+                std::array<u64, 4> rhs;
+                std::memcpy(lhs.data(), std::addressof(result.first), sizeof(lhs));
+                std::memcpy(rhs.data(), std::addressof(descriptors[index]), sizeof(rhs));
                 result.second = ((lhs[0] ^ rhs[0]) | (lhs[1] ^ rhs[1]) |
                                  (lhs[2] ^ rhs[2]) | (lhs[3] ^ rhs[3])) != 0;
             } else {
