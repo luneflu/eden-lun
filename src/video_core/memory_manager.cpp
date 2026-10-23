@@ -223,8 +223,11 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
         bool mapped{};
     };
     static constexpr size_t kCacheEntries = 2048;
-    static thread_local std::array<CacheEntry, kCacheEntries> big_cache{};
-    static thread_local std::array<CacheEntry, kCacheEntries> short_cache{};
+    struct TranslateCache {
+        std::array<CacheEntry, kCacheEntries> big{};
+        std::array<CacheEntry, kCacheEntries> short_table{};
+    };
+    static thread_local TranslateCache cache{};
 
     const u32 gen_start{translation_generation.load(std::memory_order_acquire)};
     if ((gen_start & 1) != 0) [[unlikely]] {
@@ -241,7 +244,7 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
 
     const size_t big_index{PageEntryIndex(gpu_addr, true)};
     const size_t big_slot{(big_index ^ (big_index >> 11)) & (kCacheEntries - 1)};
-    CacheEntry& big_entry{big_cache[big_slot]};
+    CacheEntry& big_entry{cache.big[big_slot]};
     if (big_entry.instance == unique_identifier && big_entry.generation == gen_start &&
         big_entry.index == big_index) {
         if (big_entry.mapped) {
@@ -262,7 +265,7 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
 
     const size_t short_index{PageEntryIndex(gpu_addr, false)};
     const size_t short_slot{(short_index ^ (short_index >> 11)) & (kCacheEntries - 1)};
-    CacheEntry& short_entry{short_cache[short_slot]};
+    CacheEntry& short_entry{cache.short_table[short_slot]};
     if (short_entry.instance == unique_identifier && short_entry.generation == gen_start &&
         short_entry.index == short_index) {
         if (!short_entry.mapped) {
