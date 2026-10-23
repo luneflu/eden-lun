@@ -11,9 +11,12 @@
   <br>
   <a href="https://git.eden-emu.dev/eden-emu/eden"><img src="./dist/qt_themes/default/icons/256x256/eden.png" alt="Eden" width="200"></a>
   <br>
-  <b>Eden</b>
+  <b>Eden (Lun)</b>
   <br>
 </h1>
+
+> [!NOTE]
+> This is an Eden fork with my custom patches and AI-assisted. The patches might be unstable and mostly tested to run and optimized for Zelda: Tears of the Kingdom. Might work for other games.
 
 <h4 align="center"><b>Eden</b> is a free and open-source (FOSS) Switch 1 emulator started by developer Camille LaVey.
 <br>
