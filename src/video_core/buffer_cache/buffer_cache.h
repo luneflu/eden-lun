@@ -1537,41 +1537,27 @@ BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_com
     if (device_addr == 0) {
         return NULL_BUFFER_ID;
     }
-    const auto try_buffer = [&](BufferId buffer_id) -> BufferId {
-        if (!buffer_id) {
-            return NULL_BUFFER_ID;
-        }
+    const u64 page = device_addr >> CACHING_PAGEBITS;
+    const BufferId buffer_id = page_table[page];
+    if (buffer_id) {
         Buffer& buffer = slot_buffers[buffer_id];
-        if (!buffer.IsInBounds(device_addr, size)) {
-            return NULL_BUFFER_ID;
-        }
-        if (Settings::IsGPUFenceBehaviorAccurate()) {
-            SynchronizeBufferWrites(buffer);
-        }
-        if constexpr (requires { buffer.IsSparseCompatible(); }) {
-            if (sparse_compatible && !buffer.IsSparseCompatible()) {
-                return NULL_BUFFER_ID;
+        if (buffer.IsInBounds(device_addr, size)) {
+            const bool should_sync = Settings::IsGPUFenceBehaviorAccurate();
+            if (should_sync) {
+                SynchronizeBufferWrites(buffer);
+            }
+            bool usable = true;
+            if constexpr (requires { buffer.IsSparseCompatible(); }) {
+                if (sparse_compatible && !buffer.IsSparseCompatible()) {
+                    usable = false;
+                }
+            }
+            if (usable) {
+                return buffer_id;
             }
         }
-        return buffer_id;
-    };
-    if (find_memo_generation == find_generation) {
-        if (const BufferId memo_id = try_buffer(find_memo_id); memo_id) {
-            return memo_id;
-        }
     }
-    const u64 page = device_addr >> CACHING_PAGEBITS;
-    if (const BufferId buffer_id = try_buffer(page_table[page]); buffer_id) {
-        find_memo_id = buffer_id;
-        find_memo_generation = find_generation;
-        return buffer_id;
-    }
-    const BufferId new_buffer_id = CreateBuffer(device_addr, size, sparse_compatible);
-    if (new_buffer_id) {
-        find_memo_id = new_buffer_id;
-        find_memo_generation = find_generation;
-    }
-    return new_buffer_id;
+    return CreateBuffer(device_addr, size, sparse_compatible);
 }
 
 template <class P>
@@ -1999,7 +1985,6 @@ void BufferCache<P>::DeleteBuffer(BufferId buffer_id, bool do_not_mark) {
         delayed_destruction_ring.Push(std::move(slot_buffers[buffer_id]));
 
     slot_buffers.erase(buffer_id);
-    ++find_generation;
 
     if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
         channel_state->dirty_uniform_buffers.fill(~u32{0});

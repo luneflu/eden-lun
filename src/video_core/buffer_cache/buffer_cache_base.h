@@ -540,9 +540,6 @@ private:
     u64 minimum_memory = 0;
     u64 critical_memory = 0;
     BufferId inline_buffer_id;
-    BufferId find_memo_id{};
-    u64 find_memo_generation = 0;
-    u64 find_generation = 0;
 #ifdef YUZU_LEGACY
     bool immediately_free = false;
 #endif
