@@ -30,6 +30,7 @@
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
+#include "video_core/renderer_vulkan/vk_pipeline_binary.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/shader_cache.h"
 
@@ -140,8 +141,11 @@ private:
                                                            PipelineStatistics* statistics,
                                                            bool build_in_parallel);
 
-    void SerializeVulkanPipelineCache(const std::filesystem::path& filename,
-                                      const vk::PipelineCache& pipeline_cache, u32 cache_version);
+    [[nodiscard]] u64 DriverSignature() const;
+
+    size_t SerializeVulkanPipelineCache(const std::filesystem::path& filename,
+                                        const vk::PipelineCache& pipeline_cache,
+                                        u32 cache_version);
 
     vk::PipelineCache LoadVulkanPipelineCache(const std::filesystem::path& filename,
                                               u32 expected_cache_version);
@@ -174,9 +178,13 @@ private:
     std::filesystem::path pipeline_cache_filename;
 
     std::filesystem::path vulkan_pipeline_cache_filename;
+
+    PipelineBinaryStore pipeline_binaries;
+    std::filesystem::path pipeline_binary_filename;
     vk::PipelineCache vulkan_pipeline_cache;
     size_t pipelines_since_flush{};
     std::chrono::steady_clock::time_point last_flush{};
+    std::chrono::steady_clock::time_point last_compile{};
     std::atomic<size_t> last_cache_size{};
     std::atomic_bool flush_in_flight{};
 

@@ -73,6 +73,7 @@ VK_DEFINE_HANDLE(VmaAllocator)
     FEATURE(EXT, VertexInputDynamicState, VERTEX_INPUT_DYNAMIC_STATE, vertex_input_dynamic_state)  \
     FEATURE(KHR, Maintenance5, MAINTENANCE_5, maintenance5)                                        \
     FEATURE(KHR, Maintenance6, MAINTENANCE_6, maintenance6)                                        \
+    FEATURE(KHR, PipelineBinary, PIPELINE_BINARY, pipeline_binary)                                 \
     FEATURE(KHR, PipelineExecutableProperties, PIPELINE_EXECUTABLE_PROPERTIES,                     \
             pipeline_executable_properties)                                                        \
     FEATURE(KHR, ShaderQuadControl, SHADER_QUAD_CONTROL, shader_quad_control)                      \
@@ -197,6 +198,7 @@ VK_DEFINE_HANDLE(VmaAllocator)
     FEATURE_NAME(timeline_semaphore, timelineSemaphore)                                            \
     FEATURE_NAME(transform_feedback, transformFeedback)                                            \
     FEATURE_NAME(uniform_buffer_standard_layout, uniformBufferStandardLayout)                      \
+    FEATURE_NAME(pipeline_binary, pipelineBinaries)                                                \
     FEATURE_NAME(vertex_input_dynamic_state, vertexInputDynamicState)
 
 // These features are not required but can be helpful for drivers that can use it.
@@ -844,6 +846,16 @@ FN_MAX_LIMIT_LIST
 
     bool SupportsDynamicState3AlphaToOneEnable() const {
         return dynamic_state3_alpha_to_one;
+    }
+
+    /// Returns true if the device supports VK_KHR_pipeline_binary.
+    bool IsKhrPipelineBinarySupported() const {
+        return extensions.pipeline_binary;
+    }
+
+    /// Returns true if pipeline binaries are both exposed and enabled on the device.
+    bool SupportsPipelineBinaries() const {
+        return extensions.pipeline_binary && features.pipeline_binary.pipelineBinaries;
     }
 
     /// Returns true if the device supports VK_EXT_vertex_input_dynamic_state.

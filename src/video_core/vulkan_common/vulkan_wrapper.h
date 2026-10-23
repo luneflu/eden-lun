@@ -297,6 +297,10 @@ struct DeviceDispatch : InstanceDispatch {
     PFN_vkCreateImage vkCreateImage{};
     PFN_vkCreateImageView vkCreateImageView{};
     PFN_vkCreatePipelineCache vkCreatePipelineCache{};
+    PFN_vkCreatePipelineBinariesKHR vkCreatePipelineBinariesKHR{};
+    PFN_vkDestroyPipelineBinaryKHR vkDestroyPipelineBinaryKHR{};
+    PFN_vkGetPipelineBinaryDataKHR vkGetPipelineBinaryDataKHR{};
+    PFN_vkReleaseCapturedPipelineDataKHR vkReleaseCapturedPipelineDataKHR{};
     PFN_vkCreatePipelineLayout vkCreatePipelineLayout{};
     PFN_vkCreateQueryPool vkCreateQueryPool{};
     PFN_vkCreateRenderPass vkCreateRenderPass{};
@@ -1071,6 +1075,20 @@ public:
         const VkDescriptorSetLayoutCreateInfo& ci) const;
 
     [[nodiscard]] PipelineCache CreatePipelineCache(const VkPipelineCacheCreateInfo& ci) const;
+
+    [[nodiscard]] std::vector<VkPipelineBinaryKHR> CreatePipelineBinariesKHR(
+        const VkPipelineBinaryCreateInfoKHR& ci) const;
+
+    struct PipelineBinaryData {
+        VkPipelineBinaryKeyKHR key{};
+        std::vector<u8> data;
+    };
+
+    [[nodiscard]] PipelineBinaryData GetPipelineBinaryDataKHR(VkPipelineBinaryKHR binary) const;
+
+    void ReleaseCapturedPipelineDataKHR(VkPipeline pipeline) const;
+
+    void DestroyPipelineBinaryKHR(VkPipelineBinaryKHR binary) const;
 
     [[nodiscard]] PipelineLayout CreatePipelineLayout(const VkPipelineLayoutCreateInfo& ci) const;
 

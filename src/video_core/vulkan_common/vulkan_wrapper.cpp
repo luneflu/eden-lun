@@ -181,6 +181,10 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkCreateImage);
     X(vkCreateImageView);
     X(vkCreatePipelineCache);
+    X(vkCreatePipelineBinariesKHR);
+    X(vkDestroyPipelineBinaryKHR);
+    X(vkGetPipelineBinaryDataKHR);
+    X(vkReleaseCapturedPipelineDataKHR);
     X(vkCreatePipelineLayout);
     X(vkCreateQueryPool);
     X(vkCreateRenderPass);
@@ -864,6 +868,58 @@ VkMemoryRequirements Device::GetImageMemoryRequirements(VkImage image) const noe
     VkMemoryRequirements requirements;
     dld->vkGetImageMemoryRequirements(handle, image, &requirements);
     return requirements;
+}
+
+std::vector<VkPipelineBinaryKHR> Device::CreatePipelineBinariesKHR(
+    const VkPipelineBinaryCreateInfoKHR& ci) const {
+    VkPipelineBinaryHandlesInfoKHR handles{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_HANDLES_INFO_KHR,
+        .pNext = nullptr,
+        .pipelineBinaryCount = 0,
+        .pPipelineBinaries = nullptr,
+    };
+    Check(dld->vkCreatePipelineBinariesKHR(handle, &ci, nullptr, &handles));
+    std::vector<VkPipelineBinaryKHR> binaries(handles.pipelineBinaryCount);
+    if (binaries.empty()) {
+        return binaries;
+    }
+    handles.pPipelineBinaries = binaries.data();
+    Check(dld->vkCreatePipelineBinariesKHR(handle, &ci, nullptr, &handles));
+    return binaries;
+}
+
+Device::PipelineBinaryData Device::GetPipelineBinaryDataKHR(
+    VkPipelineBinaryKHR binary) const {
+    const VkPipelineBinaryDataInfoKHR info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_DATA_INFO_KHR,
+        .pNext = nullptr,
+        .pipelineBinary = binary,
+    };
+    PipelineBinaryData result{};
+    result.key.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR;
+    result.key.pNext = nullptr;
+    result.key.keySize = 0;
+    size_t size{};
+    Check(dld->vkGetPipelineBinaryDataKHR(handle, &info, &result.key, &size, nullptr));
+    if (size == 0) {
+        return result;
+    }
+    result.data.resize(size);
+    Check(dld->vkGetPipelineBinaryDataKHR(handle, &info, &result.key, &size,
+                                          result.data.data()));
+    return result;
+}
+
+void Device::ReleaseCapturedPipelineDataKHR(VkPipeline pipeline) const {
+    const VkReleaseCapturedPipelineDataInfoKHR info{
+        .sType = VK_STRUCTURE_TYPE_RELEASE_CAPTURED_PIPELINE_DATA_INFO_KHR,
+        .pNext = nullptr,
+        .pipeline = pipeline,
+    };
+    dld->vkReleaseCapturedPipelineDataKHR(handle, &info, nullptr);
+}
+void Device::DestroyPipelineBinaryKHR(VkPipelineBinaryKHR binary) const {
+    dld->vkDestroyPipelineBinaryKHR(handle, binary, nullptr);
 }
 
 std::vector<VkPipelineExecutablePropertiesKHR> Device::GetPipelineExecutablePropertiesKHR(

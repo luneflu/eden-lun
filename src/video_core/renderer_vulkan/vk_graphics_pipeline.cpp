@@ -37,6 +37,7 @@
 #endif
 
 namespace Vulkan {
+
 namespace {
 using boost::container::small_vector;
 using boost::container::static_vector;
@@ -255,11 +256,13 @@ GraphicsPipeline::GraphicsPipeline(
     Common::ThreadWorker* worker_thread,
     PipelineStatistics* pipeline_statistics, RenderPassCache& render_pass_cache,
     const GraphicsPipelineCacheKey& key_, std::array<vk::ShaderModule, NUM_STAGES> stages,
-    const std::array<const Shader::Info*, NUM_STAGES>& infos)
+    const std::array<const Shader::Info*, NUM_STAGES>& infos,
+    PipelineBinaryStore* pipeline_binaries_)
     : key{key_}, device{device_}, texture_cache{texture_cache_}, buffer_cache{buffer_cache_},
       pipeline_cache(pipeline_cache_), scheduler{scheduler_},
       guest_descriptor_queue{guest_descriptor_queue_},
-      descriptor_buffer_ring{descriptor_buffer_ring_}, spv_modules{std::move(stages)} {
+      descriptor_buffer_ring{descriptor_buffer_ring_}, spv_modules{std::move(stages)},
+      pipeline_binaries{pipeline_binaries_} {
     if (shader_notify) {
         shader_notify->MarkShaderBuilding();
     }
@@ -1073,9 +1076,66 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
 
-    pipeline = device.GetLogical().CreateGraphicsPipeline({
-        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+    // VK_KHR_pipeline_binary: replay a stored blob if present, otherwise capture one.
+    const u64 pipeline_hash{key.Hash()};
+    const PipelineBinaryEntry* const stored{
+        pipeline_binaries ? pipeline_binaries->Find(pipeline_hash) : nullptr};
+    const bool supports_binaries{device.SupportsPipelineBinaries()};
+    const bool capture_data{!stored && supports_binaries && pipeline_binaries != nullptr};
+    std::vector<VkPipelineBinaryKHR> replay_binaries;
+    VkPipelineBinaryInfoKHR binary_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_INFO_KHR,
         .pNext = nullptr,
+        .binaryCount = 0,
+        .pPipelineBinaries = nullptr,
+    };
+    std::vector<u8> replay_data;
+    VkPipelineBinaryKeyKHR replay_key{};
+    if (stored != nullptr && supports_binaries) {
+        replay_key = stored->key;
+        replay_data = stored->data;
+        const VkPipelineBinaryDataKHR data_desc{
+            .dataSize = replay_data.size(),
+            .pData = replay_data.data(),
+        };
+        const VkPipelineBinaryKeysAndDataKHR keys_and_data{
+            .binaryCount = 1,
+            .pPipelineBinaryKeys = &replay_key,
+            .pPipelineBinaryData = &data_desc,
+        };
+        const VkPipelineBinaryCreateInfoKHR binary_ci{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_CREATE_INFO_KHR,
+            .pNext = nullptr,
+            .pKeysAndDataInfo = &keys_and_data,
+            .pipeline = VK_NULL_HANDLE,
+            .pPipelineCreateInfo = nullptr,
+        };
+        try {
+            replay_binaries = device.GetLogical().CreatePipelineBinariesKHR(binary_ci);
+        } catch (const vk::Exception& exception) {
+            replay_binaries.clear();
+            LOG_DEBUG(Render_Vulkan, "Pipeline binary replay failed for {:#x}: {}",
+                      pipeline_hash, exception.what());
+        }
+        if (!replay_binaries.empty()) {
+            binary_info.binaryCount = static_cast<u32>(replay_binaries.size());
+            binary_info.pPipelineBinaries = replay_binaries.data();
+        }
+    }
+
+    const VkPipelineCreateFlags2CreateInfoKHR flags2_ci{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .flags = static_cast<VkPipelineCreateFlags2KHR>(flags) |
+                 (capture_data ? VK_PIPELINE_CREATE_2_CAPTURE_DATA_BIT_KHR : 0),
+    };
+    const void* const replay_next{binary_info.binaryCount != 0
+                                      ? static_cast<const void*>(&binary_info)
+                                      : nullptr};
+
+    VkGraphicsPipelineCreateInfo pipeline_ci{
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = capture_data ? static_cast<const void*>(&flags2_ci) : replay_next,
         .flags = flags,
         .stageCount = static_cast<u32>(shader_stages.size()),
         .pStages = shader_stages.data(),
@@ -1093,8 +1153,36 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .subpass = 0,
         .basePipelineHandle = nullptr,
         .basePipelineIndex = 0,
-    }, *pipeline_cache);
+    };
 
+    pipeline = device.GetLogical().CreateGraphicsPipeline(pipeline_ci, *pipeline_cache);
+
+    for (const VkPipelineBinaryKHR binary : replay_binaries) {
+        device.GetLogical().DestroyPipelineBinaryKHR(binary);
+    }
+
+    if (capture_data && pipeline_binaries != nullptr) {
+        const VkPipelineBinaryCreateInfoKHR capture_ci{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_CREATE_INFO_KHR,
+            .pNext = nullptr,
+            .pKeysAndDataInfo = nullptr,
+            .pipeline = *pipeline,
+            .pPipelineCreateInfo = nullptr,
+        };
+        try {
+            for (const VkPipelineBinaryKHR binary :
+                 device.GetLogical().CreatePipelineBinariesKHR(capture_ci)) {
+                const auto result{device.GetLogical().GetPipelineBinaryDataKHR(binary)};
+                pipeline_binaries->Insert(pipeline_hash, result.key, result.data);
+                LOG_DEBUG(Render_Vulkan, "Captured pipeline binary {:#x} ({} bytes)",
+                          pipeline_hash, result.data.size());
+                device.GetLogical().DestroyPipelineBinaryKHR(binary);
+            }
+        } catch (const vk::Exception& exception) {
+            LOG_DEBUG(Render_Vulkan, "Pipeline binary capture failed: {}", exception.what());
+        }
+        device.GetLogical().ReleaseCapturedPipelineDataKHR(*pipeline);
+    }
     // Log graphics pipeline creation
     if (GPU::Logging::IsActive()) {
         const std::string pipeline_info = fmt::format(
