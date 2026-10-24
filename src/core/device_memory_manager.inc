@@ -253,6 +253,7 @@ void DeviceMemoryManager<Traits>::Unmap(DAddr address, size_t size) {
         auto phys_addr = entry.compressed_physical_ptr;
         entry.compressed_physical_ptr = 0;
         entry.cpu_backing_address = 0;
+        entry.continuity_tracker = 0;
         if (phys_addr != 0) [[likely]] {
             u32& base_dev = compressed_device_addr.GetAndFault(phys_addr - 1U);
             if ((base_dev >> MULTI_FLAG_BITS) == 0) [[likely]] {
@@ -378,7 +379,18 @@ void DeviceMemoryManager<Traits>::WalkBlock(DAddr addr, std::size_t size, auto o
     std::size_t page_index = addr >> Memory::YUZU_PAGEBITS;
     std::size_t page_offset = addr & Memory::YUZU_PAGEMASK;
     while (remaining_size) {
-        const size_t next_pages = std::size_t(tracked_entries[page_index].continuity_tracker+1);
+        const u32 phys_addr = tracked_entries[page_index].compressed_physical_ptr;
+        std::size_t next_pages = 1;
+        if (phys_addr != 0) {
+            next_pages = std::size_t(tracked_entries[page_index].continuity_tracker) + 1;
+            if (next_pages > 1) {
+                // Only trust a continuity run that still resolves to contiguous physical pages.
+                const auto& last = tracked_entries[page_index + next_pages - 1];
+                if (last.compressed_physical_ptr != phys_addr + (next_pages - 1)) {
+                    next_pages = 1;
+                }
+            }
+        }
         const std::size_t copy_amount = (std::min)((next_pages << Memory::YUZU_PAGEBITS) - page_offset, remaining_size);
         const auto current_vaddr = u64((page_index << Memory::YUZU_PAGEBITS) + page_offset);
         SCOPE_EXIT{
@@ -388,7 +400,6 @@ void DeviceMemoryManager<Traits>::WalkBlock(DAddr addr, std::size_t size, auto o
             remaining_size -= copy_amount;
         };
 
-        auto phys_addr = tracked_entries[page_index].compressed_physical_ptr;
         if (phys_addr == 0) {
             on_unmapped(copy_amount, current_vaddr);
             continue;
