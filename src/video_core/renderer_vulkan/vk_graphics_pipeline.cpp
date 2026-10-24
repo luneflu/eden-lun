@@ -339,7 +339,8 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }};
     if (worker_thread) {
-        worker_thread->QueueWork(std::move(func));
+        // The frame that triggered this build needs it first, so it goes ahead of any backlog.
+        worker_thread->QueueWorkFront(std::move(func));
     } else {
         func();
     }

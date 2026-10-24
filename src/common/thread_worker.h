@@ -7,6 +7,7 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
@@ -71,7 +72,7 @@ public:
                             break;
                         }
                         task = std::move(requests.front());
-                        requests.pop();
+                        requests.pop_front();
                     }
                     if constexpr (with_state) {
                         task(&state);
@@ -99,7 +100,18 @@ public:
     void QueueWork(Task work) {
         {
             std::unique_lock lock{queue_mutex};
-            requests.emplace(std::move(work));
+            requests.push_back(std::move(work));
+            ++work_scheduled;
+        }
+        condition.notify_one();
+    }
+
+    // Queues ahead of already pending work. Used when the rendered frame needs the result
+    // before the rest of a backlog does.
+    void QueueWorkFront(Task work) {
+        {
+            std::unique_lock lock{queue_mutex};
+            requests.push_front(std::move(work));
             ++work_scheduled;
         }
         condition.notify_one();
@@ -118,7 +130,7 @@ public:
     }
 
 private:
-    std::queue<Task> requests;
+    std::deque<Task> requests;
     std::mutex queue_mutex;
     std::condition_variable_any condition;
     std::condition_variable wait_condition;

@@ -142,7 +142,8 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
         }
     }};
     if (thread_worker) {
-        thread_worker->QueueWork(std::move(func));
+        // The frame that triggered this build needs it first, so it goes ahead of any backlog.
+        thread_worker->QueueWorkFront(std::move(func));
     } else {
         func();
     }
