@@ -307,8 +307,11 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
 }
 
 size_t GetTotalPipelineWorkers() {
-    const size_t max_core_threads =
-        std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL) - 1ULL;
+    // Compiling saturates memory bandwidth, and every extra worker steals a core from the guest.
+    // Half the logical processors keeps the shader pool below the emulation threads.
+    const size_t logical =
+        std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL);
+    const size_t max_core_threads = std::max<size_t>(logical / 2, 2ULL);
 #ifdef __ANDROID__
     const int configured = AndroidSettings::values.pipeline_worker_count.GetValue();
     const int clamped = std::clamp(configured, 2, 8);
