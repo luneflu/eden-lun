@@ -193,6 +193,33 @@ u64 GenericEnvironment::CalculateHash() const {
     return Common::CityHash64(data.get(), size);
 }
 
+u64 GenericEnvironment::CalculateAnswersHash() const {
+    std::vector<u64> parts;
+    parts.reserve(texture_types.size() + texture_pixel_formats.size() + cbuf_values.size() +
+                  cbuf_replacements.size() + 6);
+    for (const auto& [address, type] : texture_types) {
+        parts.push_back((static_cast<u64>(address) << 8) | static_cast<u64>(type));
+    }
+    for (const auto& [address, format] : texture_pixel_formats) {
+        parts.push_back((static_cast<u64>(address) << 8) | static_cast<u64>(format));
+    }
+    for (const auto& [key, value] : cbuf_values) {
+        parts.push_back(key);
+        parts.push_back(value);
+    }
+    for (const auto& [key, value] : cbuf_replacements) {
+        parts.push_back(key ^ 0x5DEECE66DULL);
+        parts.push_back(static_cast<u64>(value));
+    }
+    std::sort(parts.begin(), parts.end());
+    parts.push_back((static_cast<u64>(local_memory_size) << 32) | shared_memory_size);
+    parts.push_back((static_cast<u64>(texture_bound) << 32) | workgroup_size[0]);
+    parts.push_back((static_cast<u64>(workgroup_size[1]) << 32) | workgroup_size[2]);
+    parts.push_back(static_cast<u64>(viewport_transform_state));
+    return Common::CityHash64(reinterpret_cast<const char*>(parts.data()),
+                              parts.size() * sizeof(u64));
+}
+
 void GenericEnvironment::Dump(u64 pipeline_hash, u64 shader_hash) {
     DumpImpl(pipeline_hash, shader_hash, code, read_highest, read_lowest, initial_offset, stage);
 }

@@ -721,6 +721,10 @@ u64 PipelineCache::DriverSignature() const {
 }
 
 PipelineCache::~PipelineCache() {
+    if (spirv_cache != nullptr) {
+        LOG_INFO(Render_Vulkan, "SPIR-V cache: {} hits this session", spirv_cache_hits);
+        spirv_cache->Save();
+    }
     if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      CACHE_VERSION);
@@ -787,6 +791,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         return;
     }
     pipeline_cache_filename = base_dir / "vulkan.bin";
+    spirv_cache = std::make_unique<SpirvCache>(base_dir / "spirv.bin");
 
     if (use_vulkan_pipeline_cache) {
         vulkan_pipeline_cache_filename = base_dir / "vulkan_pipelines.bin";
@@ -904,6 +909,18 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     }
 }
 
+void PipelineCache::QueueSpirvCacheFlush() {
+    if (spirv_cache == nullptr) {
+        return;
+    }
+    // Batch the store: serializing on every insert would cost more than the emit it saves.
+    if (++spirv_cache_inserts < 128) {
+        return;
+    }
+    spirv_cache_inserts = 0;
+    serialization_thread.QueueWork([cache = spirv_cache.get()] { cache->Save(); });
+}
+
 void PipelineCache::QueueVulkanPipelineCacheFlush() {
     if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty()) {
         return;
@@ -977,6 +994,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     LOG_DEBUG(Render_Vulkan, "{:#016x}", hash);
     size_t env_index{0};
     std::array<Shader::IR::Program, Maxwell::MaxShaderProgram> programs;
+    std::array<u64, Maxwell::MaxShaderProgram> env_hashes{};
     const bool uses_vertex_a{key.unique_hashes[0] != 0};
     const bool uses_vertex_b{key.unique_hashes[1] != 0};
 
@@ -997,6 +1015,9 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         }
         Shader::Environment& env{*envs[env_index]};
         ++env_index;
+        if (const auto* const generic{dynamic_cast<const VideoCommon::GenericEnvironment*>(&env)}) {
+            env_hashes[index] = generic->CalculateHash() ^ generic->CalculateAnswersHash();
+        }
 
         const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
         Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
@@ -1026,6 +1047,32 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     std::array<const Shader::Info*, Maxwell::MaxShaderStage> infos{};
     std::array<vk::ShaderModule, Maxwell::MaxShaderStage> modules;
 
+    // Bindings advance per emitted stage, so a pipeline is either fully reused or fully emitted:
+    // mixing cached and fresh stages would desync the binding offsets.
+    std::array<u64, Maxwell::MaxShaderProgram> spirv_keys{};
+    std::array<std::vector<u32>, Maxwell::MaxShaderStage> cached_code;
+    bool all_cached{spirv_cache != nullptr};
+    for (size_t index = uses_vertex_a && uses_vertex_b ? 1 : 0; index < Maxwell::MaxShaderProgram;
+         ++index) {
+        const bool is_emulated_stage = layer_source_program != nullptr &&
+                                       index == static_cast<u32>(Maxwell::ShaderType::Geometry);
+        if (key.unique_hashes[index] == 0 && !is_emulated_stage) {
+            continue;
+        }
+        const std::array<u64, 3> parts{key.Hash(), env_hashes[index], index};
+        spirv_keys[index] = Common::CityHash64(reinterpret_cast<const char*>(parts.data()),
+                                               sizeof(parts));
+        if (!all_cached) {
+            continue;
+        }
+        all_cached = spirv_cache->TryGet(spirv_keys[index], index, cached_code[index - 1]);
+    }
+    if (all_cached && spirv_cache != nullptr && !cached_code.empty()) {
+        // Every requested stage was a hit; emit nothing.
+    } else {
+        std::ranges::for_each(cached_code, [](auto& code) { code.clear(); });
+    }
+
     const Shader::IR::Program* previous_stage{};
     Shader::Backend::Bindings binding;
     for (size_t index = uses_vertex_a && uses_vertex_b ? 1 : 0; index < Maxwell::MaxShaderProgram;
@@ -1041,9 +1088,19 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         const size_t stage_index{index - 1};
         infos[stage_index] = &program.info;
 
-        const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
-        ConvertLegacyToGeneric(program, runtime_info);
-        const std::vector<u32> code{EmitSPIRV(profile, runtime_info, program, binding)};
+        std::vector<u32> code;
+        if (!cached_code[stage_index].empty()) {
+            code = std::move(cached_code[stage_index]);
+            ++spirv_cache_hits;
+        } else {
+            const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
+            ConvertLegacyToGeneric(program, runtime_info);
+            code = EmitSPIRV(profile, runtime_info, program, binding);
+            if (spirv_cache != nullptr) {
+                spirv_cache->Insert(spirv_keys[index], index, code);
+                QueueSpirvCacheFlush();
+            }
+        }
         device.SaveShader(code);
         modules[stage_index] = BuildShader(device, code);
 
@@ -1170,7 +1227,21 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
                     max_shared_memory / 1024);
         program.shared_memory_size = max_shared_memory;
     }
-    const std::vector<u32> code{EmitSPIRV(profile, program)};
+    const auto& generic_env{static_cast<const VideoCommon::GenericEnvironment&>(env)};
+    const u64 env_hash{generic_env.CalculateHash() ^ generic_env.CalculateAnswersHash()};
+    const std::array<u64, 3> spirv_key_parts{key.Hash(), env_hash, 0};
+    const u64 spirv_key{Common::CityHash64(reinterpret_cast<const char*>(spirv_key_parts.data()),
+                                           sizeof(spirv_key_parts))};
+    std::vector<u32> code;
+    if (spirv_cache == nullptr || !spirv_cache->TryGet(spirv_key, 0, code)) {
+        code = EmitSPIRV(profile, program);
+        if (spirv_cache != nullptr) {
+            spirv_cache->Insert(spirv_key, 0, code);
+            QueueSpirvCacheFlush();
+        }
+    } else {
+        ++spirv_cache_hits;
+    }
     device.SaveShader(code);
     vk::ShaderModule spv_module{BuildShader(device, code)};
 
