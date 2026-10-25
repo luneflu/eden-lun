@@ -97,6 +97,12 @@ public:
     [[nodiscard]] virtual std::optional<ReplaceConstant> GetReplaceConstBuffer(u32 bank,
                                                                                u32 offset) = 0;
 
+    // Translation-input hash used to key the SPIR-V cache. Environments that only replay stored
+    // answers (pipeline records loaded from disk) cannot compute it and return 0.
+    [[nodiscard]] virtual u64 EnvHash() const noexcept {
+        return 0;
+    }
+
     virtual void Dump(u64 pipeline_hash, u64 shader_hash) = 0;
 
     [[nodiscard]] const ProgramHeader& SPH() const noexcept {

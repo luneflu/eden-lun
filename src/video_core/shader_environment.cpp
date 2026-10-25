@@ -193,6 +193,33 @@ u64 GenericEnvironment::CalculateHash() const {
     return Common::CityHash64(data.get(), size);
 }
 
+u64 GenericEnvironment::CalculateAnswersHash() const {
+    std::vector<u64> parts;
+    parts.reserve(texture_types.size() + texture_pixel_formats.size() + cbuf_values.size() +
+                  cbuf_replacements.size() + 6);
+    for (const auto& [address, type] : texture_types) {
+        parts.push_back((static_cast<u64>(address) << 8) | static_cast<u64>(type));
+    }
+    for (const auto& [address, format] : texture_pixel_formats) {
+        parts.push_back((static_cast<u64>(address) << 8) | static_cast<u64>(format));
+    }
+    for (const auto& [key, value] : cbuf_values) {
+        parts.push_back(key);
+        parts.push_back(value);
+    }
+    for (const auto& [key, value] : cbuf_replacements) {
+        parts.push_back(key ^ 0x5DEECE66DULL);
+        parts.push_back(static_cast<u64>(value));
+    }
+    std::sort(parts.begin(), parts.end());
+    parts.push_back((static_cast<u64>(local_memory_size) << 32) | shared_memory_size);
+    parts.push_back((static_cast<u64>(texture_bound) << 32) | workgroup_size[0]);
+    parts.push_back((static_cast<u64>(workgroup_size[1]) << 32) | workgroup_size[2]);
+    parts.push_back(static_cast<u64>(viewport_transform_state));
+    return Common::CityHash64(reinterpret_cast<const char*>(parts.data()),
+                              parts.size() * sizeof(u64));
+}
+
 void GenericEnvironment::Dump(u64 pipeline_hash, u64 shader_hash) {
     DumpImpl(pipeline_hash, shader_hash, code, read_highest, read_lowest, initial_offset, stage);
 }
@@ -478,6 +505,15 @@ void FileEnvironment::Deserialize(std::ifstream& file) {
         .read(reinterpret_cast<char*>(&read_highest), sizeof(read_highest))
         .read(reinterpret_cast<char*>(&viewport_transform_state), sizeof(viewport_transform_state))
         .read(reinterpret_cast<char*>(&stage), sizeof(stage));
+    // A foreign or damaged file can claim any counts; bound them so deserialization cannot
+    // allocate or read unbounded amounts of memory.
+    constexpr u64 MAX_CODE_SIZE = 8ULL * 1024 * 1024;
+    constexpr u64 MAX_ENTRIES = 1ULL << 16;
+    if (code_size > MAX_CODE_SIZE || num_texture_types > MAX_ENTRIES ||
+        num_texture_pixel_formats > MAX_ENTRIES || num_cbuf_values > MAX_ENTRIES ||
+        num_cbuf_replacement_values > MAX_ENTRIES) {
+        throw std::ios_base::failure("Corrupt pipeline cache environment");
+    }
     code.resize(Common::DivCeil(code_size, sizeof(u64)));
     file.read(reinterpret_cast<char*>(code.data()), code_size);
     for (size_t i = 0; i < num_texture_types; ++i) {
@@ -662,6 +698,13 @@ void LoadPipelines(
         }
         u32 num_envs{};
         file.read(reinterpret_cast<char*>(&num_envs), sizeof(num_envs));
+        // A foreign or damaged file can carry anything here; refuse instead of allocating on it.
+        if (num_envs == 0 || num_envs > Tegra::Engines::Maxwell3D::Regs::MaxShaderProgram) {
+            LOG_ERROR(Common_Filesystem,
+                      "Corrupt pipeline cache record ({} environments) in \"{}\"", num_envs,
+                      Common::FS::PathToUTF8String(filename));
+            return;
+        }
         std::vector<FileEnvironment> envs(num_envs);
         for (FileEnvironment& env : envs) {
             env.Deserialize(file);

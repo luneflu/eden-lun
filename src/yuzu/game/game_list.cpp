@@ -458,6 +458,11 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     QAction* open_mod_location = context_menu.addAction(tr("Open Mod Data Location"));
     QAction* open_transferable_shader_cache =
         context_menu.addAction(tr("Open Transferable Pipeline Cache"));
+    QMenu* shader_pack_menu = context_menu.addMenu(tr("Shader Pack"));
+    QAction* import_shader_pack = shader_pack_menu->addAction(tr("Import"));
+    QAction* import_shader_pack_merge = shader_pack_menu->addAction(tr("Import && Merge"));
+    QAction* export_shader_pack = shader_pack_menu->addAction(tr("Export"));
+    QAction* delete_shader_pack = shader_pack_menu->addAction(tr("Delete"));
     QAction* ryujinx = context_menu.addAction(tr("Link to Ryujinx"));
     context_menu.addSeparator();
     QMenu* remove_menu = context_menu.addMenu(tr("Remove"));
@@ -493,11 +498,13 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     open_save_location->setVisible(program_id != 0);
     open_mod_location->setVisible(program_id != 0);
     open_transferable_shader_cache->setVisible(program_id != 0);
+    shader_pack_menu->menuAction()->setVisible(program_id != 0);
     remove_update->setVisible(program_id != 0);
     remove_dlc->setVisible(program_id != 0);
     remove_gl_shader_cache->setVisible(program_id != 0);
     remove_vk_shader_cache->setVisible(program_id != 0);
     remove_shader_cache->setVisible(program_id != 0);
+    shader_pack_menu->menuAction()->setVisible(program_id != 0);
     remove_all_content->setVisible(program_id != 0);
 
     connect(favorite, &QAction::triggered, this,
@@ -540,6 +547,14 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
         emit RemoveFileRequested(program_id,
                                  QtCommon::Game::GameListRemoveTarget::CustomConfiguration, path);
     });
+    connect(import_shader_pack, &QAction::triggered, this,
+            [this, program_id]() { emit ImportShaderPackRequested(program_id, false); });
+    connect(import_shader_pack_merge, &QAction::triggered, this,
+            [this, program_id]() { emit ImportShaderPackRequested(program_id, true); });
+    connect(export_shader_pack, &QAction::triggered, this,
+            [this, program_id]() { emit ExportShaderPackRequested(program_id); });
+    connect(delete_shader_pack, &QAction::triggered, this,
+            [this, program_id]() { emit DeleteShaderPackRequested(program_id); });
     connect(set_play_time, &QAction::triggered, this,
             [this, program_id]() { emit SetPlayTimeRequested(program_id); });
     connect(remove_play_time_data, &QAction::triggered, this,

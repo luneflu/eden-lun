@@ -99,6 +99,10 @@ signals:
     void OpenFolderRequested(u64 program_id, GameListOpenTarget target,
                              const std::string& game_path);
     void OpenTransferableShaderCacheRequested(u64 program_id);
+    // `merge` false replaces the existing store with the imported pack.
+    void ImportShaderPackRequested(u64 program_id, bool merge);
+    void ExportShaderPackRequested(u64 program_id);
+    void DeleteShaderPackRequested(u64 program_id);
     void RemoveInstalledEntryRequested(u64 program_id, QtCommon::Game::InstalledEntryType type);
     void RemoveFileRequested(u64 program_id, QtCommon::Game::GameListRemoveTarget target,
                              const std::string& game_path);

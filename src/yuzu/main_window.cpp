@@ -1440,6 +1440,18 @@ void MainWindow::ConnectWidgetEvents() {
     connect(game_list, &GameList::OpenFolderRequested, this, &MainWindow::OnGameListOpenFolder);
     connect(game_list, &GameList::OpenTransferableShaderCacheRequested, this,
             [this](u64 program_id) { QtCommon::Path::OpenShaderCache(program_id, this); });
+    connect(game_list, &GameList::ImportShaderPackRequested, this,
+            [this](u64 program_id, bool merge) {
+                QtCommon::Path::ImportShaderPack(program_id, merge, this);
+            });
+    connect(game_list, &GameList::ExportShaderPackRequested, this,
+            [this](u64 program_id) {
+                QtCommon::Path::ExportShaderPack(program_id, this);
+            });
+    connect(game_list, &GameList::DeleteShaderPackRequested, this,
+            [this](u64 program_id) {
+                QtCommon::Path::DeleteShaderPack(program_id, this);
+            });
     connect(game_list, &GameList::RemoveInstalledEntryRequested, this,
             &MainWindow::OnGameListRemoveInstalledEntry);
     connect(game_list, &GameList::RemoveFileRequested, this, &MainWindow::OnGameListRemoveFile);
