@@ -456,12 +456,20 @@ HostLoc RegAlloc::SelectARegister(std::bitset<32> desired_locations) const noexc
 }
 
 std::optional<HostLoc> RegAlloc::ValueLocation(const IR::Inst* value) const noexcept {
-    for (size_t i = 0; i < hostloc_info.size(); i++)
+    if (value == memo_inst && hostloc_info[memo_loc].ContainsValue(value)) {
+        return HostLoc(memo_loc);
+    }
+    for (size_t i = 0; i < hostloc_info.size(); i++) {
+        if (!occupied.test(i))
+            continue;
         if (hostloc_info[i].ContainsValue(value)) {
             //for (size_t j = 0; j < hostloc_info.size(); ++j)
             //    ASSERT((i == j || !hostloc_info[j].ContainsValue(value)) && "duplicate defs");
+            memo_inst = value;
+            memo_loc = i;
             return HostLoc(i);
         }
+    }
     return std::nullopt;
 }
 

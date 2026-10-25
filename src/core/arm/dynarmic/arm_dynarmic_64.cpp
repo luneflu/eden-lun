@@ -7,6 +7,7 @@
 #include "common/settings.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #include "core/arm/dynarmic/arm_dynarmic_64.h"
+#include "dynarmic/backend/x64/jit_stats.h"
 #include "core/arm/dynarmic/dynarmic_exclusive_monitor.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_process.h"
@@ -444,6 +445,12 @@ void ArmDynarmic64::ClearInstructionCache() {
 }
 
 void ArmDynarmic64::InvalidateCacheRange(u64 addr, std::size_t size) {
+#ifdef EDEN_JIT_STATS
+    Dynarmic::Backend::X64::Stats().invalidate_calls.fetch_add(1, std::memory_order_relaxed);
+    Dynarmic::Backend::X64::Stats().invalidate_ranges.fetch_add(
+        ((addr & ~u64{ICACHE_LINE_SIZE - 1}) + size + ICACHE_LINE_SIZE - 1) / ICACHE_LINE_SIZE,
+        std::memory_order_relaxed);
+#endif
     m_jit->InvalidateCacheRange(addr, size);
 }
 

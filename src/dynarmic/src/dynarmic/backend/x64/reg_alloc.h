@@ -21,6 +21,7 @@
 
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/hostloc.h"
+#include "dynarmic/backend/x64/jit_stats.h"
 #include "dynarmic/backend/x64/stack_layout.h"
 #include "dynarmic/backend/x64/oparg.h"
 #include "dynarmic/backend/x64/abi.h"
@@ -201,8 +202,16 @@ public:
     void ReleaseStackSpace(BlockOfCode& code, const size_t stack_space) noexcept;
 
     inline void EndOfAllocScope() noexcept {
-        for (auto& iter : hostloc_info)
-            iter.ReleaseAll();
+#ifdef EDEN_JIT_STATS
+        Stats().alloc_scopes.fetch_add(1, std::memory_order_relaxed);
+#endif
+        for (size_t i = 0; i < hostloc_info.size(); i++) {
+            if (!occupied.test(i))
+                continue;
+            hostloc_info[i].ReleaseAll();
+            if (hostloc_info[i].IsEmpty())
+                occupied.reset(i);
+        }
     }
     inline void AssertNoMoreUses() noexcept {
         ASSERT(std::all_of(hostloc_info.begin(), hostloc_info.end(), [](const auto& i) noexcept { return i.IsEmpty(); }));
@@ -235,6 +244,8 @@ private:
 
     inline HostLocInfo& LocInfo(const HostLoc loc) noexcept {
         DEBUG_ASSERT(loc != HostLoc::RSP && loc != ABI_JIT_PTR);
+        // Conservative: any non-const access may leave state behind, so the entry must be swept.
+        occupied.set(size_t(loc));
         return hostloc_info[size_t(loc)];
     }
     inline const HostLocInfo& LocInfo(const HostLoc loc) const noexcept {
@@ -250,6 +261,14 @@ private:
     std::bitset<32> gpr_order;
     std::bitset<32> xmm_order;
     size_t reserved_stack_space = 0;
+    // Superset of entries that may hold state; drives the ValueLocation scan and the
+    // EndOfAllocScope sweep. A stale set bit only costs a check, a cleared bit would lose state,
+    // so it is only cleared once an entry is provably empty.
+    std::bitset<NonSpillHostLocCount + SpillCount> occupied;
+    // One-entry ValueLocation memo. Validated with ContainsValue on every hit, so it never needs
+    // invalidation.
+    mutable const IR::Inst* memo_inst = nullptr;
+    mutable size_t memo_loc = 0;
 };
 
 }  // namespace Dynarmic::Backend::X64
