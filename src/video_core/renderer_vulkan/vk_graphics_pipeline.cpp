@@ -354,6 +354,16 @@ void GraphicsPipeline::AddTransition(GraphicsPipeline* transition) {
 
 template <typename Spec>
 bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
+    if (!IsBuilt()) {
+        if (Settings::values.use_asynchronous_shaders.GetValue()) {
+            // The worker is still compiling, so none of the per-draw setup below (descriptors,
+            // buffer binds, render targets) can be used this frame. Skip before paying for it.
+            return false;
+        }
+        std::unique_lock build_lock{build_mutex};
+        build_condvar.wait(build_lock, [this] { return IsBuilt(); });
+    }
+
     boost::container::small_vector<VideoCommon::ImageViewInOut, 64> views;
     boost::container::small_vector<VideoCommon::SamplerId, 64> samplers;
     views.reserve(num_image_elements);
@@ -600,17 +610,6 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     }
 
     scheduler.RequestRenderpass(texture_cache.GetFramebuffer());
-    if (!is_built.load(std::memory_order::relaxed)) {
-        if (Settings::values.use_asynchronous_shaders.GetValue()) {
-            // Waiting here would stall the GPU thread for the whole worker compile, so skip this
-            // frame's draw instead and pick it up once the pipeline reports as built.
-            return false;
-        }
-        // Synchronous shaders: block until the worker finishes instead of dropping the draw, so
-        // the frame is complete but late.
-        std::unique_lock build_lock{build_mutex};
-        build_condvar.wait(build_lock, [this] { return is_built.load(std::memory_order::relaxed); });
-    }
     const bool is_rescaling{texture_cache.IsRescaling()};
     const bool update_rescaling{scheduler.UpdateRescaling(is_rescaling)};
     const bool bind_pipeline{scheduler.UpdateGraphicsPipeline(this)};

@@ -152,6 +152,16 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
 bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                 Tegra::MemoryManager& gpu_memory, Scheduler& scheduler,
                                 BufferCache& buffer_cache, TextureCache& texture_cache) {
+    if (!is_built.load(std::memory_order::relaxed)) {
+        if (Settings::values.use_asynchronous_shaders.GetValue()) {
+            // Worker still compiling: skip before the descriptor and buffer setup below, which
+            // this dispatch cannot use anyway.
+            return false;
+        }
+        std::unique_lock build_lock{build_mutex};
+        build_condvar.wait(build_lock, [this] { return is_built.load(std::memory_order::relaxed); });
+    }
+
     guest_descriptor_queue.Acquire(scheduler, num_descriptor_entries, uses_descriptor_buffer);
 
     buffer_cache.SetComputeUniformBufferState(info.constant_buffer_mask, &uniform_buffer_sizes);
@@ -258,17 +268,6 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     const VideoCommon::ImageViewInOut* views_it{views.data()};
     PushImageDescriptors(texture_cache, guest_descriptor_queue, info, rescaling, samplers_it,
                          views_it);
-
-    if (!is_built.load(std::memory_order::relaxed)) {
-        if (Settings::values.use_asynchronous_shaders.GetValue()) {
-            // Waiting here would stall the GPU thread for the whole worker compile, so skip this
-            // frame's dispatch instead and pick it up once the pipeline reports as built.
-            return false;
-        }
-        // Synchronous shaders: block until the worker finishes instead of dropping the dispatch.
-        std::unique_lock build_lock{build_mutex};
-        build_condvar.wait(build_lock, [this] { return is_built.load(std::memory_order::relaxed); });
-    }
 
     // Log compute pipeline binding
     if (GPU::Logging::IsActive() &&
