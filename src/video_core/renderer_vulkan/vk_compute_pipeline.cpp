@@ -260,9 +260,14 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                          views_it);
 
     if (!is_built.load(std::memory_order::relaxed)) {
-        // Waiting here would stall the GPU thread for the whole worker compile, so skip this
-        // frame's dispatch instead and pick it up once the pipeline reports as built.
-        return false;
+        if (Settings::values.use_asynchronous_shaders.GetValue()) {
+            // Waiting here would stall the GPU thread for the whole worker compile, so skip this
+            // frame's dispatch instead and pick it up once the pipeline reports as built.
+            return false;
+        }
+        // Synchronous shaders: block until the worker finishes instead of dropping the dispatch.
+        std::unique_lock build_lock{build_mutex};
+        build_condvar.wait(build_lock, [this] { return is_built.load(std::memory_order::relaxed); });
     }
 
     // Log compute pipeline binding
