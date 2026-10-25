@@ -21,7 +21,6 @@
 
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/hostloc.h"
-#include "dynarmic/backend/x64/jit_stats.h"
 #include "dynarmic/backend/x64/stack_layout.h"
 #include "dynarmic/backend/x64/oparg.h"
 #include "dynarmic/backend/x64/abi.h"
@@ -202,9 +201,6 @@ public:
     void ReleaseStackSpace(BlockOfCode& code, const size_t stack_space) noexcept;
 
     inline void EndOfAllocScope() noexcept {
-#ifdef EDEN_JIT_STATS
-        Stats().alloc_scopes.fetch_add(1, std::memory_order_relaxed);
-#endif
         for (size_t i = 0; i < hostloc_info.size(); i++) {
             if (!occupied.test(i))
                 continue;

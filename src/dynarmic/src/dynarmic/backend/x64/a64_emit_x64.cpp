@@ -18,7 +18,6 @@
 
 #include "dynarmic/backend/x64/a64_jitstate.h"
 #include "dynarmic/backend/x64/abi.h"
-#include "dynarmic/backend/x64/jit_stats.h"
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/devirtualize.h"
 #include "dynarmic/backend/x64/emit_x64.h"
@@ -74,9 +73,6 @@ A64EmitX64::A64EmitX64(BlockOfCode& code, A64::UserConfig conf, A64::Jit* jit_in
 A64EmitX64::~A64EmitX64() = default;
 
 A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) noexcept {
-#ifdef EDEN_JIT_STATS
-    const std::uint64_t compile_start_tsc{__rdtsc()};
-#endif
     if (conf.very_verbose_debugging_output) [[unlikely]] {
         std::puts(IR::DumpBlock(block).c_str());
     }
@@ -169,10 +165,6 @@ finish_this_inst:
     auto bdesc = RegisterBlock(descriptor, entrypoint, size);
     code.DisableWriting();
     shared_labels.clear();
-#ifdef EDEN_JIT_STATS
-    Stats().blocks.fetch_add(1, std::memory_order_relaxed);
-    Stats().tsc_ticks.fetch_add(__rdtsc() - compile_start_tsc, std::memory_order_relaxed);
-#endif
     return bdesc;
 }
 

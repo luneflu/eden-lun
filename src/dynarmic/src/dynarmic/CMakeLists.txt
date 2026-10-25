@@ -412,8 +412,5 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_compile_definitions(dynarmic PRIVATE FMT_USE_WINDOWS_H=0)
 endif()
-if (EDEN_JIT_STATS)
-    target_compile_definitions(dynarmic PRIVATE EDEN_JIT_STATS=1)
-endif()
 
 target_compile_definitions(dynarmic PRIVATE FMT_USE_USER_DEFINED_LITERALS=1)
