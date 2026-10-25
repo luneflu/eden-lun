@@ -31,7 +31,6 @@
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_pipeline_binary.h"
-#include "video_core/renderer_vulkan/vk_spirv_cache.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/shader_cache.h"
 
@@ -162,7 +161,6 @@ private:
                                               u32 expected_cache_version);
 
     void QueueVulkanPipelineCacheFlush();
-    void QueueSpirvCacheFlush();
 
     const Device& device;
     Scheduler& scheduler;
@@ -190,11 +188,6 @@ private:
     std::filesystem::path pipeline_cache_filename;
 
     std::filesystem::path vulkan_pipeline_cache_filename;
-
-    // Translated SPIR-V, device agnostic and shared across boots.
-    std::unique_ptr<SpirvCache> spirv_cache;
-    size_t spirv_cache_inserts{};
-    size_t spirv_cache_hits{};
 
     PipelineBinaryStore pipeline_binaries;
     std::filesystem::path pipeline_binary_filename;

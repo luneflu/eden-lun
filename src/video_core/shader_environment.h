@@ -61,9 +61,6 @@ public:
 
     [[nodiscard]] u64 CalculateHash() const;
 
-    // Hash of the guest answers (texture types/formats, cbuf words) this environment captured.
-    [[nodiscard]] u64 CalculateAnswersHash() const;
-
     void Dump(u64 pipeline_hash, u64 shader_hash) override;
 
     void Serialize(std::ofstream& file) const;
