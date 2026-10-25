@@ -201,6 +201,26 @@
         <item>2</item>
     </integer-array>
 
+    <string-array name="pipelineWorkersNames">
+        <item>@string/pipeline_workers_adaptive</item>
+        <item>@string/pipeline_workers_one</item>
+        <item>@string/pipeline_workers_two</item>
+        <item>@string/pipeline_workers_three</item>
+        <item>@string/pipeline_workers_four</item>
+        <item>@string/pipeline_workers_six</item>
+        <item>@string/pipeline_workers_eight</item>
+    </string-array>
+
+    <integer-array name="pipelineWorkersValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>6</item>
+        <item>8</item>
+    </integer-array>
+
     <string-array name="rendererVSyncNames">
         <item>@string/renderer_vsync_immediate</item>
         <item>@string/renderer_vsync_mailbox</item>

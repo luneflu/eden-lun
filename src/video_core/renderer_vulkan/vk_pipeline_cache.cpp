@@ -5,7 +5,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -13,8 +15,12 @@
 #include <thread>
 #include <vector>
 #include <bit>
+#include <mutex>
+#include <condition_variable>
 #include <numeric>
+#include <string_view>
 #include "common/cityhash.h"
+#include "common/settings.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "common/thread_worker.h"
@@ -46,9 +52,6 @@
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 
-#ifdef __ANDROID__
-#include "../../android/app/src/main/jni/android_settings.h"
-#endif
 
 namespace Vulkan {
 
@@ -306,26 +309,157 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
     return info;
 }
 
+size_t RequestedPipelineWorkers() {
+    switch (Settings::values.pipeline_workers.GetValue()) {
+    case Settings::PipelineWorkers::One:
+        return 1;
+    case Settings::PipelineWorkers::Two:
+        return 2;
+    case Settings::PipelineWorkers::Three:
+        return 3;
+    case Settings::PipelineWorkers::Four:
+        return 4;
+    case Settings::PipelineWorkers::Six:
+        return 6;
+    case Settings::PipelineWorkers::Eight:
+        return 8;
+    default:
+        return 0; // Adaptive
+    }
+}
+
 size_t GetTotalPipelineWorkers() {
     // Compiling saturates memory bandwidth, and every extra worker steals a core from the guest.
     // Half the logical processors keeps the shader pool below the emulation threads.
     const size_t logical =
         std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL);
     const size_t max_core_threads = std::max<size_t>(logical / 2, 2ULL);
-#ifdef __ANDROID__
-    const int configured = AndroidSettings::values.pipeline_worker_count.GetValue();
-    const int clamped = std::clamp(configured, 2, 8);
-    const size_t desired = static_cast<size_t>(clamped);
-    if (desired == 0) {
-        return 1ULL;
+    const size_t requested = RequestedPipelineWorkers();
+    if (requested != 0) {
+        return std::min(requested, logical);
     }
-    return std::min(max_core_threads, desired);
-#else
     return max_core_threads;
-#endif
 }
 
 } // Anonymous namespace
+
+namespace {
+std::atomic<u64> dropped_draws{};
+} // Anonymous namespace
+
+namespace {
+// Admission control for pipeline builds. The frame time budget decides how many builds may run
+// concurrently: when frames sag, builds are serialized; once frames recover, the pool runs full.
+struct BuildGate {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool enabled{[] {
+        const char* const env = std::getenv("EDEN_PIPELINE_THROTTLE");
+        return env == nullptr || std::string_view{env} != "0";
+    }()};
+    size_t limit{enabled ? 1U : 8U};
+    size_t inflight{};
+    double best_frame_ms{};
+    int recovered{};
+    std::chrono::steady_clock::time_point last_change{};
+    std::chrono::steady_clock::time_point last_relax{};
+};
+
+BuildGate& Gate() {
+    static BuildGate gate;
+    return gate;
+}
+
+size_t WorkerCeiling() {
+    static const size_t ceiling = std::max<size_t>(GetTotalPipelineWorkers(), 1ULL);
+    return ceiling;
+}
+} // Anonymous namespace
+
+void ObserveFrameTime(double frame_ms, u64 recent_drops) {
+    BuildGate& gate = Gate();
+    // Without asynchronous shaders the GPU thread blocks on the build, so serializing builds would
+    // turn every pending draw into a full-length stall.
+    if (!gate.enabled || frame_ms <= 0.0 || !Settings::values.use_asynchronous_shaders.GetValue()) {
+        return;
+    }
+    // A fixed worker count disables adaptivity: the user picked the concurrency.
+    if (RequestedPipelineWorkers() != 0) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    std::scoped_lock lock{gate.mutex};
+
+    // Track the best frame time seen; relax it slowly so a permanently slower scene does not
+    // keep the gate closed forever.
+    if (gate.best_frame_ms == 0.0 || frame_ms < gate.best_frame_ms) {
+        gate.best_frame_ms = frame_ms;
+    } else if (now - gate.last_relax > std::chrono::seconds{5}) {
+        gate.best_frame_ms *= 1.02;
+        gate.last_relax = now;
+    }
+
+    const size_t ceiling = WorkerCeiling();
+    const bool too_slow = frame_ms > gate.best_frame_ms * 1.25;
+    const bool fast_enough = frame_ms < gate.best_frame_ms * 1.10;
+
+    if (now - gate.last_change < std::chrono::seconds{2}) {
+        return;
+    }
+    if (too_slow && gate.limit > 1) {
+        gate.limit = 1;
+        gate.recovered = 0;
+        gate.last_change = now;
+        gate.cv.notify_all();
+    } else if (fast_enough) {
+        if (++gate.recovered >= 3 && gate.limit < ceiling) {
+            gate.limit = ceiling;
+            gate.recovered = 0;
+            gate.last_change = now;
+            gate.cv.notify_all();
+        }
+    } else {
+        gate.recovered = 0;
+    }
+}
+
+void EnterPipelineBuild() {
+    BuildGate& gate = Gate();
+    if (!gate.enabled || !Settings::values.use_asynchronous_shaders.GetValue() ||
+        RequestedPipelineWorkers() != 0) {
+        return;
+    }
+    std::unique_lock lock{gate.mutex};
+    // Never hold a build back indefinitely: a stalled admission shows up as missing geometry.
+    if (!gate.cv.wait_for(lock, std::chrono::seconds{2}, [&gate] {
+            return gate.inflight == 0 || gate.inflight < gate.limit;
+        })) {
+        ++gate.inflight;
+        return;
+    }
+    ++gate.inflight;
+}
+
+void ExitPipelineBuild() {
+    BuildGate& gate = Gate();
+    if (!gate.enabled || !Settings::values.use_asynchronous_shaders.GetValue() ||
+        RequestedPipelineWorkers() != 0) {
+        return;
+    }
+    {
+        std::scoped_lock lock{gate.mutex};
+        --gate.inflight;
+    }
+    gate.cv.notify_all();
+}
+
+void RecordDroppedDraw() {
+    dropped_draws.fetch_add(1, std::memory_order_relaxed);
+}
+
+u64 TakeDroppedDraws() {
+    return dropped_draws.exchange(0, std::memory_order_relaxed);
+}
 
 size_t ComputePipelineCacheKey::Hash() const noexcept {
     const u64 hash = Common::CityHash64(reinterpret_cast<const char*>(this), sizeof *this);

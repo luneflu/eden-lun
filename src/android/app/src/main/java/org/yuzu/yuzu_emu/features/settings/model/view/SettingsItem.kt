@@ -639,13 +639,12 @@ abstract class SettingsItem(
                 )
             )
             put(
-                SliderSetting(
-                    IntSetting.ANDROID_PIPELINE_WORKERS,
+                SingleChoiceSetting(
+                    IntSetting.PIPELINE_WORKERS,
                     titleId = R.string.pipeline_worker_cores,
                     descriptionId = R.string.pipeline_worker_cores_description,
-                    min = 2,
-                    max = 8,
-                    units = "cores"
+                    choicesId = R.array.pipelineWorkersNames,
+                    valuesId = R.array.pipelineWorkersValues
                 )
             )
             put(

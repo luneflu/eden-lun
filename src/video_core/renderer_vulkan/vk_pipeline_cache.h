@@ -67,6 +67,16 @@ static_assert(std::has_unique_object_representations_v<ComputePipelineCacheKey>)
 static_assert(std::is_trivially_copyable_v<ComputePipelineCacheKey>);
 static_assert(std::is_trivially_constructible_v<ComputePipelineCacheKey>);
 
+// Draws and dispatches skipped because their pipeline was still compiling.
+void RecordDroppedDraw();
+u64 TakeDroppedDraws();
+
+// Adaptive pipeline-build admission. Frames drive a concurrency limit between 1 and the
+// configured worker count, so a compile burst cannot push the frame time up.
+void ObserveFrameTime(double frame_ms, u64 dropped_draws);
+void EnterPipelineBuild();
+void ExitPipelineBuild();
+
 } // namespace Vulkan
 
 namespace std {

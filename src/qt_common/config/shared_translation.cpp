@@ -231,9 +231,14 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the DMA read mode.\nUnsafe is faster, while Safe is more stable and can fix issues in some games.\nDefault follows the GPU Accuracy setting."));
     INSERT(Settings, gpu_fence_behavior, tr("GPU Fence Behavior:"),
            tr("Controls the GPU fence synchronization behavior.\nImmediate is the fastest option, but can introduce some issues.\nBalanced offers better compatibility and may fix issues in some games.\nAccurate further improves compatibility at the cost of some performance.\nDefault follows the GPU Mode setting."));
-    INSERT(Settings, use_asynchronous_shaders, tr("Enable asynchronous shader compilation (recommended)"),
-           tr("Skips a draw until its pipeline is compiled instead of stalling the frame.\n"
-              "Recommended: prevents hitching when new shaders appear at the cost of brief pop-in."));
+    INSERT(Settings, use_asynchronous_shaders, tr("Enable asynchronous shader compilation (EXPERIMENTAL)"),
+           tr("EXPERIMENTAL: skips a draw until its pipeline is compiled instead of stalling the "
+              "frame, which can leave parts of the scene missing until the pipeline is ready."));
+    INSERT(Settings, pipeline_workers, tr("Asynchronous Shaders Compilation Pipeline Workers"),
+           tr("Number of threads compiling pipelines while asynchronous shader compilation is "
+              "enabled.\n"
+              "Adaptive scales the count from 1 to half the logical processors, using fewer workers "
+              "when frame times rise so compilation does not slow the guest down."));
     INSERT(Settings, gpu_clock, tr("GPU Clocks"),
            tr("Makes the game believe GPU work finishes faster than it does, so it stops lowering "
               "resolution and render distance to fit the Switch's clocks."));
@@ -679,6 +684,17 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(ExtendedDynamicState, EDS1, tr("ExtendedDynamicState 1")),
                               PAIR(ExtendedDynamicState, EDS2, tr("ExtendedDynamicState 2")),
                               PAIR(ExtendedDynamicState, EDS3, tr("ExtendedDynamicState 3")),
+                          }});
+
+    translations->insert({Settings::EnumMetadata<Settings::PipelineWorkers>::Index(),
+                          {
+                              PAIR(PipelineWorkers, Adaptive, tr("Adaptive")),
+                              PAIR(PipelineWorkers, One, tr("1 worker")),
+                              PAIR(PipelineWorkers, Two, tr("2 workers")),
+                              PAIR(PipelineWorkers, Three, tr("3 workers")),
+                              PAIR(PipelineWorkers, Four, tr("4 workers")),
+                              PAIR(PipelineWorkers, Six, tr("6 workers")),
+                              PAIR(PipelineWorkers, Eight, tr("8 workers")),
                           }});
 
     translations->insert({Settings::EnumMetadata<Settings::GameListMode>::Index(),

@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
@@ -80,6 +81,12 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
     }
 
     auto func{[this, shader_notify, pipeline_statistics] {
+        EnterPipelineBuild();
+        const struct BuildScope {
+            ~BuildScope() {
+                ExitPipelineBuild();
+            }
+        } build_scope;
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
             .pNext = nullptr,
@@ -154,8 +161,8 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                 BufferCache& buffer_cache, TextureCache& texture_cache) {
     if (!is_built.load(std::memory_order::relaxed)) {
         if (Settings::values.use_asynchronous_shaders.GetValue()) {
-            // Worker still compiling: skip before the descriptor and buffer setup below, which
-            // this dispatch cannot use anyway.
+            // Asynchronous mode: skip the dispatch outright.
+            RecordDroppedDraw();
             return false;
         }
         std::unique_lock build_lock{build_mutex};

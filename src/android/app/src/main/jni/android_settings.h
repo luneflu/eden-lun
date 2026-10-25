@@ -147,12 +147,6 @@ namespace AndroidSettings {
                                                       &show_performance_overlay};
 
 
-        Settings::SwitchableSetting<s32> pipeline_worker_count{linkage, 2, "pipeline_worker_count",
-                                 Settings::Category::Android,
-                                 Settings::Specialization::Default,
-                                 true,
-                                 true};
-
 
         Settings::Setting<bool> show_input_overlay{linkage, true, "show_input_overlay",
                                                    Settings::Category::Overlay};

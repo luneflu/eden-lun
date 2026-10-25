@@ -4,7 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <chrono>
+#include <vector>
 
 #include "common/settings.h"
 #include "common/thread.h"
@@ -12,6 +14,7 @@
 #ifdef HAS_LSFG
 #include "video_core/renderer_vulkan/present/lsfg_common.h"
 #endif
+#include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_present_manager.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -605,15 +608,44 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
         static u64 frame_count{};
         static u64 last_count{};
         static auto last_time{std::chrono::steady_clock::now()};
+        static auto last_frame{last_time};
+        static std::vector<double> window_ms;
+        static u64 window_drops{};
+        static double window_seconds{};
         ++frame_count;
         const auto now = std::chrono::steady_clock::now();
+        if (frame_count > 1) {
+            window_ms.push_back(
+                1000.0 * std::chrono::duration<double>(now - last_frame).count());
+        }
+        last_frame = now;
         const double seconds = std::chrono::duration<double>(now - last_time).count();
         if (seconds >= 1.0) {
+            const double mean_ms{1000.0 * seconds / static_cast<double>(frame_count - last_count)};
             LOG_INFO(Render_Vulkan, "FrameStat: frames={} fps={:.2} ms/frame={:.2}", frame_count,
-                     static_cast<double>(frame_count - last_count) / seconds,
-                     1000.0 * seconds / static_cast<double>(frame_count - last_count));
+                     static_cast<double>(frame_count - last_count) / seconds, mean_ms);
+            const u64 drops_since_last{TakeDroppedDraws()};
+            window_drops += drops_since_last;
+            ObserveFrameTime(mean_ms, drops_since_last);
+            window_seconds += seconds;
             last_count = frame_count;
             last_time = now;
+        }
+        if (window_seconds >= 10.0 && !window_ms.empty()) {
+            std::vector<double> sorted{window_ms};
+            std::sort(sorted.begin(), sorted.end());
+            const auto pct{[&sorted](double p) {
+                return sorted[std::min(sorted.size() - 1,
+                                       static_cast<size_t>(p * 0.01 * sorted.size()))];
+            }};
+            LOG_INFO(Render_Vulkan,
+                     "FrameSummary: samples={} p50={:.2} p95={:.2} p99={:.2} max={:.2} "
+                     "drops={} fps={:.1}",
+                     sorted.size(), pct(50), pct(95), pct(99), sorted.back(), window_drops,
+                     static_cast<double>(sorted.size()) / window_seconds);
+            window_ms.clear();
+            window_drops = 0;
+            window_seconds = 0.0;
         }
     }
 }

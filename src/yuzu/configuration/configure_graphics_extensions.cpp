@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QLabel>
 #include <QSlider>
 #include <qnamespace.h>
@@ -95,6 +96,23 @@ void ConfigureGraphicsExtensions::Setup(const ConfigurationShared::Builder& buil
 
     for (const auto& [id, widget] : hacks_hold) {
         hacks.addWidget(widget);
+    }
+
+    // The worker count only matters while compilation runs on background threads.
+    const auto async_it{hacks_hold.find(Settings::values.use_asynchronous_shaders.Id())};
+    const auto workers_it{hacks_hold.find(Settings::values.pipeline_workers.Id())};
+    if (async_it != hacks_hold.end() && workers_it != hacks_hold.end()) {
+        // The builder returns a container widget, so reach for the actual checkbox / combobox.
+        auto* const async_box{async_it->second->findChild<QCheckBox*>()};
+        auto* const workers_combo{workers_it->second->findChild<QComboBox*>()};
+        if (async_box != nullptr && workers_combo != nullptr) {
+            const auto sync_workers{[async_box, workers_combo] {
+                workers_combo->setEnabled(async_box->isChecked());
+            }};
+            QObject::connect(async_box, &QCheckBox::toggled, workers_combo,
+                             [sync_workers] { sync_workers(); });
+            sync_workers();
+        }
     }
 }
 

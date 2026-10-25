@@ -71,8 +71,15 @@
     <string name="show_power_info_description">Display current power draw and remaining capacity on battery</string>
     <string name="show_shaders_building">Show Shaders Building</string>
     <string name="show_shaders_building_description">Display current number of shaders being built</string>
+    <string name="pipeline_workers_adaptive">Adaptive</string>
+    <string name="pipeline_workers_one">1 worker</string>
+    <string name="pipeline_workers_two">2 workers</string>
+    <string name="pipeline_workers_three">3 workers</string>
+    <string name="pipeline_workers_four">4 workers</string>
+    <string name="pipeline_workers_six">6 workers</string>
+    <string name="pipeline_workers_eight">8 workers</string>
     <string name="pipeline_worker_cores">Pipeline Worker Threads</string>
-    <string name="pipeline_worker_cores_description">Manage the amount of cores used for building Vulkan pipelines, the higher value will improve pipeline compilation performance but temperatures will increase as well.</string>
+    <string name="pipeline_worker_cores_description">Pipeline build threads used while asynchronous shader compilation is enabled. Adaptive scales the count from 1 to half the logical processors, using fewer workers when frame times rise. Only used while asynchronous shader compilation is enabled.</string>
     <string name="overlay_position">Overlay Position</string>
     <string name="overlay_position_description">Choose where the overlay is displayed on the screen</string>
     <string name="overlay_position_top_left">Top Left</string>

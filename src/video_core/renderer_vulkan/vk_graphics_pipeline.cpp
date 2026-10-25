@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -24,6 +25,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
+#include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/shader_notify.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -313,6 +315,12 @@ GraphicsPipeline::GraphicsPipeline(
     }
 
     auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics] {
+        EnterPipelineBuild();
+        const struct BuildScope {
+            ~BuildScope() {
+                ExitPipelineBuild();
+            }
+        } build_scope;
         const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
         Validate();
         try {
@@ -356,8 +364,8 @@ template <typename Spec>
 bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     if (!IsBuilt()) {
         if (Settings::values.use_asynchronous_shaders.GetValue()) {
-            // The worker is still compiling, so none of the per-draw setup below (descriptors,
-            // buffer binds, render targets) can be used this frame. Skip before paying for it.
+            // Asynchronous mode: skip the draw outright and pick it up once the build reports done.
+            RecordDroppedDraw();
             return false;
         }
         std::unique_lock build_lock{build_mutex};

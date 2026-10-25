@@ -11,6 +11,8 @@
 #include <typeindex>
 #include <typeinfo>
 #include <utility>
+#include <thread>
+#include <algorithm>
 #include <vector>
 
 #include <QAbstractButton>
@@ -51,6 +53,14 @@
 namespace ConfigurationShared {
 
 static int restore_button_count = 0;
+
+// Largest worker count worth offering on this machine: guest cores and the GPU thread keep their
+// own logical processors, so half the logical count is the useful ceiling.
+static u32 WorkerCountCeiling() {
+    const size_t logical{
+        std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL)};
+    return static_cast<u32>(std::max<size_t>(logical / 2, 2ULL));
+}
 
 static std::string RelevantDefault(const Settings::BasicSetting& setting) {
     return Settings::IsConfiguringGlobal() ? setting.DefaultToString() : setting.ToStringGlobal();
@@ -145,6 +155,11 @@ QWidget* Widget::CreateCombobox(std::function<std::string()>& serializer,
                 setting.Id() != Settings::values.controller_applet_mode.Id()) {
                 continue;
             }
+            // Only offer worker counts this machine can actually host.
+            if (type == Settings::EnumMetadata<Settings::PipelineWorkers>::Index() &&
+                id > WorkerCountCeiling()) {
+                continue;
+            }
             combobox->addItem(name, id);
         }
     } else {
@@ -161,7 +176,8 @@ QWidget* Widget::CreateCombobox(std::function<std::string()>& serializer,
     };
 
     const u32 setting_value = std::strtoul(setting.ToString().c_str(), nullptr, 0);
-    combobox->setCurrentIndex(find_index(setting_value));
+    const int selected = find_index(setting_value);
+    combobox->setCurrentIndex(selected >= 0 ? selected : 0);
 
     serializer = [this]() {
         return std::to_string(combobox->currentData().toUInt());
