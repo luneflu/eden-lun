@@ -231,8 +231,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the DMA read mode.\nUnsafe is faster, while Safe is more stable and can fix issues in some games.\nDefault follows the GPU Accuracy setting."));
     INSERT(Settings, gpu_fence_behavior, tr("GPU Fence Behavior:"),
            tr("Controls the GPU fence synchronization behavior.\nImmediate is the fastest option, but can introduce some issues.\nBalanced offers better compatibility and may fix issues in some games.\nAccurate further improves compatibility at the cost of some performance.\nDefault follows the GPU Mode setting."));
-    INSERT(Settings, use_asynchronous_shaders, tr("Enable asynchronous shader compilation"),
-           tr("May reduce shader stutter."));
+    INSERT(Settings, use_asynchronous_shaders, tr("Enable asynchronous shader compilation (recommended)"),
+           tr("Skips a draw until its pipeline is compiled instead of stalling the frame.\n"
+              "Recommended: prevents hitching when new shaders appear at the cost of brief pop-in."));
     INSERT(Settings, gpu_clock, tr("GPU Clocks"),
            tr("Makes the game believe GPU work finishes faster than it does, so it stops lowering "
               "resolution and render distance to fit the Switch's clocks."));
