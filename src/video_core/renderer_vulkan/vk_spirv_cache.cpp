@@ -17,7 +17,11 @@ namespace {
 
 constexpr std::array<char, 8> MAGIC_NUMBER{'e', 'd', 'e', 'n', 's', 'p', 'v', '1'};
 // Shareable container: SPIR-V records plus the pipeline key list, so one file precompiles.
-constexpr std::array<char, 8> PACK_MAGIC{'N', 'X', 'S', 'P', 'A', 'C', 'K', '1'};
+constexpr std::array<char, 8> PACK_MAGIC_V1{'N', 'X', 'S', 'P', 'A', 'C', 'K', '1'};
+constexpr std::array<char, 8> PACK_MAGIC{'N', 'X', 'S', 'P', 'A', 'C', 'K', '2'};
+// Sections are tagged by backend so a pack stays one format across renderers: everything
+// outside the tag (shader hashes, guest answers, Maxwell state) is backend neutral.
+constexpr std::array<char, 4> VULKAN_SECTION{'V', 'K', '0', '1'};
 constexpr u32 SPIRV_CACHE_VERSION = 1;
 // Keeps one title's store in the tens of MB; older entries simply stop being added.
 constexpr size_t MAX_TOTAL_WORDS = 64ULL * 1024 * 1024 / sizeof(u32);
@@ -46,15 +50,67 @@ std::vector<u8> ReadFileBytes(const std::filesystem::path& path) {
     return bytes;
 }
 
-bool ReadBlock(std::ifstream& file, std::vector<u8>& out) {
-    u32 size{};
-    file.read(reinterpret_cast<char*>(&size), sizeof(size));
-    if (!file || size > (1ULL << 30)) {
+struct Section {
+    std::array<char, 4> id{};
+    std::vector<u8> data;
+};
+
+// Splits a pack body into its backend tagged sections; unknown ids are kept so a newer pack
+// can still be read by an older build.
+std::vector<Section> ReadSections(std::span<const u8> body) {
+    std::vector<Section> sections;
+    size_t offset{};
+    const auto read{[&](void* out, size_t size) {
+        if (offset + size > body.size()) {
+            return false;
+        }
+        std::memcpy(out, body.data() + offset, size);
+        offset += size;
+        return true;
+    }};
+    while (offset < body.size()) {
+        Section section;
+        u32 size{};
+        if (!read(section.id.data(), section.id.size()) || !read(&size, sizeof(size)) ||
+            size > (1ULL << 30)) {
+            sections.clear();
+            return sections;
+        }
+        section.data.resize(size);
+        if (size != 0 && !read(section.data.data(), size)) {
+            sections.clear();
+            return sections;
+        }
+        sections.push_back(std::move(section));
+    }
+    return sections;
+}
+
+bool SplitVulkanPayload(std::span<const u8> payload, std::vector<u8>& spirv,
+                        std::vector<u8>& keys) {
+    size_t offset{};
+    const auto read{[&](void* out, size_t size) {
+        if (offset + size > payload.size()) {
+            return false;
+        }
+        std::memcpy(out, payload.data() + offset, size);
+        offset += size;
+        return true;
+    }};
+    u32 spirv_size{};
+    if (!read(&spirv_size, sizeof(spirv_size)) || spirv_size > (1ULL << 30)) {
         return false;
     }
-    out.resize(size);
-    file.read(reinterpret_cast<char*>(out.data()), size);
-    return static_cast<bool>(file);
+    spirv.resize(spirv_size);
+    if (spirv_size != 0 && !read(spirv.data(), spirv_size)) {
+        return false;
+    }
+    u32 keys_size{};
+    if (!read(&keys_size, sizeof(keys_size)) || keys_size > (1ULL << 30)) {
+        return false;
+    }
+    keys.resize(keys_size);
+    return keys_size == 0 || read(keys.data(), keys_size);
 }
 
 } // namespace
@@ -69,16 +125,42 @@ SpirvCache::SpirvCache(std::filesystem::path filename_) : filename{std::move(fil
     if (!file) {
         return;
     }
+    file.close();
+    const std::vector<u8> bytes{ReadFileBytes(filename)};
     std::vector<u8> payload;
     if (magic == PACK_MAGIC) {
-        // Local store written by Save(): payload block, then the pipeline key snapshot.
-        if (!ReadBlock(file, payload) || !ReadBlock(file, keys)) {
+        if (bytes.size() < magic.size()) {
             return;
         }
+        for (Section& section : ReadSections(std::span<const u8>{bytes}.subspan(magic.size()))) {
+            if (section.id == VULKAN_SECTION) {
+                if (!SplitVulkanPayload(section.data, payload, keys)) {
+                    return;
+                }
+            }
+        }
+    } else if (magic == PACK_MAGIC_V1) {
+        // Older single backend container: SPIR-V block, then the pipeline key block.
+        if (bytes.size() < magic.size() + sizeof(u32)) {
+            return;
+        }
+        std::span<const u8> body{bytes};
+        body = body.subspan(magic.size());
+        u32 spirv_size{};
+        std::memcpy(&spirv_size, body.data(), sizeof(spirv_size));
+        if (body.size() < sizeof(spirv_size) + spirv_size + sizeof(u32)) {
+            return;
+        }
+        payload.assign(body.begin() + sizeof(spirv_size),
+                       body.begin() + sizeof(spirv_size) + spirv_size);
+        u32 keys_size{};
+        std::memcpy(&keys_size, body.data() + sizeof(spirv_size) + spirv_size,
+                    sizeof(keys_size));
+        keys.assign(body.begin() + sizeof(spirv_size) + spirv_size + sizeof(keys_size),
+                    body.begin() + sizeof(spirv_size) + spirv_size + sizeof(keys_size) +
+                        keys_size);
     } else {
-        file.close();
-        payload = ReadFileBytes(filename);
-        magic.fill(0);
+        payload = bytes;
     }
     Parse(payload);
 
@@ -219,19 +301,26 @@ void SpirvCache::Merge(const std::filesystem::path& other) {
     if (!file) {
         return;
     }
+    file.close();
     if (magic != PACK_MAGIC) {
-        file.close();
         MergeSpirv(other);
         return;
     }
+    const std::vector<u8> bytes{ReadFileBytes(other)};
     std::vector<u8> spirv;
     std::vector<u8> pack_keys;
-    if (!ReadBlock(file, spirv) || !ReadBlock(file, pack_keys)) {
-        LOG_WARNING(Render_Vulkan, "Shader pack '{}' is truncated, ignoring",
+    bool found_vulkan{};
+    for (const Section& section : ReadSections(std::span<const u8>{bytes}.subspan(magic.size()))) {
+        // Sections for other backends are ignored until one exists to consume them.
+        if (section.id == VULKAN_SECTION) {
+            found_vulkan = SplitVulkanPayload(section.data, spirv, pack_keys);
+        }
+    }
+    if (!found_vulkan) {
+        LOG_WARNING(Render_Vulkan, "Shader pack '{}' has no usable section, ignoring",
                     Common::FS::PathToUTF8String(other));
         return;
     }
-    file.close();
     if (!pack_keys.empty()) {
         // The key list is what makes an imported pack precompile: the loader rebuilds every
         // record for the local driver on the next boot.
@@ -359,9 +448,23 @@ void SpirvCache::Save() {
             file.write(reinterpret_cast<const char*>(&size), sizeof(size));
             file.write(reinterpret_cast<const char*>(block.data()), block.size());
         }};
+        // One backend tagged section today; a pack from another renderer simply adds its own.
+        std::vector<u8> vulkan_payload;
+        {
+            const u32 spirv_size{static_cast<u32>(spirv.size())};
+            const auto* spirv_size_bytes = reinterpret_cast<const u8*>(&spirv_size);
+            vulkan_payload.insert(vulkan_payload.end(), spirv_size_bytes,
+                                  spirv_size_bytes + sizeof(spirv_size));
+            vulkan_payload.insert(vulkan_payload.end(), spirv.begin(), spirv.end());
+            const u32 keys_size{static_cast<u32>(snapshot.size())};
+            const auto* keys_size_bytes = reinterpret_cast<const u8*>(&keys_size);
+            vulkan_payload.insert(vulkan_payload.end(), keys_size_bytes,
+                                  keys_size_bytes + sizeof(keys_size));
+            vulkan_payload.insert(vulkan_payload.end(), snapshot.begin(), snapshot.end());
+        }
         file.write(PACK_MAGIC.data(), PACK_MAGIC.size());
-        write_block(spirv);
-        write_block(snapshot);
+        file.write(VULKAN_SECTION.data(), VULKAN_SECTION.size());
+        write_block(vulkan_payload);
     }
     std::error_code ec;
     std::filesystem::rename(tmp, filename, ec);
