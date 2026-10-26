@@ -820,6 +820,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         std::mutex mutex;
         size_t total{};
         size_t built{};
+        size_t unsupported{};
         bool has_loaded{};
         std::unique_ptr<PipelineStatistics> statistics;
     } state;
@@ -865,31 +866,37 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         key.state.driver_id = dynamic_features.driver_id;
         key.state.driver_version = dynamic_features.driver_version;
 
-        if ((key.state.extended_dynamic_state != 0) !=
-                dynamic_features.has_extended_dynamic_state ||
-            (key.state.extended_dynamic_state_2 != 0) !=
-                dynamic_features.has_extended_dynamic_state_2 ||
-            (key.state.extended_dynamic_state_2_logic_op != 0) !=
-                dynamic_features.has_extended_dynamic_state_2_logic_op ||
-            (key.state.extended_dynamic_state_3_blend != 0) !=
-                dynamic_features.has_extended_dynamic_state_3_blend ||
-            (key.state.extended_dynamic_state_3_enables != 0) !=
-                dynamic_features.has_extended_dynamic_state_3_enables ||
-            (key.state.color_write_enable_dynamic != 0) !=
-                dynamic_features.has_color_write_enable ||
-            (key.state.dynamic_vertex_input != 0) !=
-                dynamic_features.has_dynamic_vertex_input) {
+        // A record is unusable only when it needs a feature this device lacks. A record that
+        // holds more static state than we would emit is fine: it builds as a fully static
+        // pipeline, which is exactly what a weaker device needs to precompile it.
+        if ((key.state.extended_dynamic_state != 0 &&
+             !dynamic_features.has_extended_dynamic_state) ||
+            (key.state.extended_dynamic_state_2 != 0 &&
+             !dynamic_features.has_extended_dynamic_state_2) ||
+            (key.state.extended_dynamic_state_2_logic_op != 0 &&
+             !dynamic_features.has_extended_dynamic_state_2_logic_op) ||
+            (key.state.extended_dynamic_state_3_blend != 0 &&
+             !dynamic_features.has_extended_dynamic_state_3_blend) ||
+            (key.state.extended_dynamic_state_3_enables != 0 &&
+             !dynamic_features.has_extended_dynamic_state_3_enables) ||
+            (key.state.color_write_enable_dynamic != 0 &&
+             !dynamic_features.has_color_write_enable) ||
+            (key.state.dynamic_vertex_input != 0 &&
+             !dynamic_features.has_dynamic_vertex_input)) {
+            ++state.unsupported;
             return;
         }
 
         const bool key_requests_provoking_last = key.state.provoking_vertex_last != 0;
         if (key_requests_provoking_last && !dynamic_features.has_provoking_vertex_last_mode) {
+            ++state.unsupported;
             return;
         }
 
         const bool key_uses_transform_feedback = key.state.xfb_enabled != 0;
         if (key_uses_transform_feedback && key_requests_provoking_last &&
             !dynamic_features.has_provoking_vertex_tf_preserve) {
+            ++state.unsupported;
             return;
         }
 
@@ -919,7 +926,10 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     if (std::filesystem::exists(import_filename)) {
         VideoCommon::LoadPipelines(stop_loading, import_filename, CACHE_VERSION, load_compute,
                                    load_graphics);
-        LOG_INFO(Render_Vulkan, "Loaded {} pipeline records from an imported cache", state.total);
+        LOG_INFO(Render_Vulkan,
+                 "Imported {} pipeline records, {} need features this device lacks and will "
+                 "compile on first draw",
+                 state.total, state.unsupported);
     }
     VideoCommon::LoadPipelines(stop_loading, pipeline_cache_filename, CACHE_VERSION, load_compute,
                                load_graphics);
