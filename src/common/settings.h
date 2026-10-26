@@ -662,6 +662,10 @@ struct Values {
                                                        "pipeline_workers",
                                                        Category::RendererHacks};
 
+    SwitchableSetting<bool> disable_pipeline_optimization{linkage, false,
+                                                         "disable_pipeline_optimization",
+                                                         Category::RendererHacks};
+
     SwitchableSetting<GpuUnswizzleSize> gpu_unswizzle_texture_size{linkage,
                                                   GpuUnswizzleSize::Large,
                                                   "gpu_unswizzle_texture_size",

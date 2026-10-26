@@ -1087,11 +1087,18 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
     if (uses_descriptor_buffer) {
         flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
+    const bool skip_optimization{Settings::values.disable_pipeline_optimization.GetValue()};
+    if (skip_optimization) {
+        flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    }
 
     // VK_KHR_pipeline_binary: replay a stored blob if present, otherwise capture one.
+    // Unoptimized binaries live under a different key so toggling the setting does not replay
+    // code built under the other flag.
     const u64 pipeline_hash{key.Hash()};
+    const u64 binary_key{skip_optimization ? pipeline_hash ^ 0x9E3779B97F4A7C15ULL : pipeline_hash};
     const PipelineBinaryEntry* const stored{
-        pipeline_binaries ? pipeline_binaries->Find(pipeline_hash) : nullptr};
+        pipeline_binaries ? pipeline_binaries->Find(binary_key) : nullptr};
     const bool supports_binaries{device.SupportsPipelineBinaries()};
     const bool capture_data{!stored && supports_binaries && pipeline_binaries != nullptr};
     std::vector<VkPipelineBinaryKHR> replay_binaries;
@@ -1185,7 +1192,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
             for (const VkPipelineBinaryKHR binary :
                  device.GetLogical().CreatePipelineBinariesKHR(capture_ci)) {
                 const auto result{device.GetLogical().GetPipelineBinaryDataKHR(binary)};
-                pipeline_binaries->Insert(pipeline_hash, result.key, result.data);
+                pipeline_binaries->Insert(binary_key, result.key, result.data);
                 LOG_DEBUG(Render_Vulkan, "Captured pipeline binary {:#x} ({} bytes)",
                           pipeline_hash, result.data.size());
                 device.GetLogical().DestroyPipelineBinaryKHR(binary);

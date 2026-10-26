@@ -610,6 +610,8 @@
     <string name="rescale_hack_description">Enables a legacy handling for the rescale configuration pass for games by using a quick rescale path</string>
     <string name="renderer_asynchronous_shaders">Use asynchronous shaders</string>
     <string name="renderer_asynchronous_shaders_description">Compiles shaders asynchronously. This may reduce stutters but may also introduce glitches.</string>
+    <string name="renderer_disable_pipeline_optimization">Skip pipeline optimization</string>
+    <string name="renderer_disable_pipeline_optimization_description">Asks the GPU driver to compile pipelines without its optimization passes.\n\nCompilation is roughly 25-30% faster, so shaders appear sooner, but the generated code may be slower while rendering.\n\nThe pipeline cache is rebuilt once when this is toggled.</string>
     <string name="gpu_unswizzle_settings">GPU Unswizzle Settings</string>
     <string name="gpu_unswizzle_settings_description">Configure GPU-based texture unswizzling parameters or disable it entirely. Adjust these settings to balance performance and texture loading quality.</string>
     <string name="gpu_unswizzle_enable">Enable GPU Unswizzle</string>

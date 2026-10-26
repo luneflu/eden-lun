@@ -778,6 +778,13 @@ abstract class SettingsItem(
                 )
             )
             put(
+                SwitchSetting(
+                    BooleanSetting.RENDERER_DISABLE_PIPELINE_OPTIMIZATION,
+                    titleId = R.string.renderer_disable_pipeline_optimization,
+                    descriptionId = R.string.renderer_disable_pipeline_optimization_description
+                )
+            )
+            put(
                 SingleChoiceSetting(
                     IntSetting.FAST_GPU_TIME,
                     titleId = R.string.fast_gpu_time,

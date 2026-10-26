@@ -239,6 +239,12 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "enabled.\n"
               "Adaptive scales the count from 1 to half the logical processors, using fewer workers "
               "when frame times rise so compilation does not slow the guest down."));
+    INSERT(Settings, disable_pipeline_optimization,
+           tr("Skip Pipeline Optimization"),
+           tr("Asks the GPU driver to compile pipelines without its optimization passes.\n"
+              "Compilation is roughly 25-30% faster, so shaders appear sooner, but the generated "
+              "code may be slower while rendering.\n"
+              "The pipeline cache is rebuilt once when this is toggled."));
     INSERT(Settings, gpu_clock, tr("GPU Clocks"),
            tr("Makes the game believe GPU work finishes faster than it does, so it stops lowering "
               "resolution and render distance to fit the Switch's clocks."));
