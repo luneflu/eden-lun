@@ -148,7 +148,7 @@ static u32 DecodeAdpcm(Core::Memory::Memory& memory, std::span<s16> out_buffer, 
         constexpr u64 steps_table = 0x1234567876543210ull;
         constexpr u64 steps_sign = 0b1111111100000000ull;
         auto const r = s32((steps_table >> (index * 4)) & 0xf);
-        return ((steps_sign >> index) & 1) == 0 ? -r : r;
+        return ((steps_sign >> index) & 1) == 0 ? r : -r;
     };
     auto const decode_sample = [&](const s32 code) -> s16 {
         const auto xn = code * (1 << scale);
