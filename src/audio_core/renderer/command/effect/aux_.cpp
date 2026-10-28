@@ -101,8 +101,6 @@ static u32 WriteAuxBufferDsp(Core::Memory::Memory& memory, CpuAddr send_info_,
 
     if (update_count) {
         send_info.write_offset = (send_info.write_offset + update_count) % count_max;
-        send_info.total_sample_count =
-            (std::min)(count_max, send_info.total_sample_count + update_count);
     }
 
     memory.WriteBlockUnsafe(send_info_, &send_info, sizeof(AuxInfo::AuxInfoDsp));
@@ -159,10 +157,7 @@ static u32 ReadAuxBufferDsp(Core::Memory::Memory& memory, CpuAddr return_info_,
         return 0;
     }
 
-    // Only samples the guest has actually produced may be consumed; anything left in the ring is
-    // stale from an earlier frame and would be replayed as sustained noise.
-    const u32 available{(std::min)(read_count_, return_info.total_sample_count)};
-    u32 read_count{available};
+    u32 read_count{read_count_};
     u32 write_pos{0};
     while (read_count > 0) {
         u32 to_read{(std::min)(count_max - target_read_offset, read_count)};
@@ -176,12 +171,11 @@ static u32 ReadAuxBufferDsp(Core::Memory::Memory& memory, CpuAddr return_info_,
     }
 
     if (update_count) {
-        return_info.read_offset = (return_info.read_offset + available) % count_max;
-        return_info.total_sample_count -= available;
+        return_info.read_offset = (return_info.read_offset + update_count) % count_max;
     }
 
     memory.WriteBlockUnsafe(return_info_, &return_info, sizeof(AuxInfo::AuxInfoDsp));
-    return available;
+    return read_count_;
 }
 
 void AuxCommand::Dump([[maybe_unused]] const AudioRenderer::CommandListProcessor& processor,
