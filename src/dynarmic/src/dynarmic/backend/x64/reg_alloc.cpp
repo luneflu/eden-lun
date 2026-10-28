@@ -18,6 +18,14 @@
 #include "dynarmic/backend/x64/xbyak.h"
 
 #include "dynarmic/backend/x64/abi.h"
+
+// Asserts that call ValueLocation scan every host location and cost more than the
+// work they check, so they are only worth keeping in debug builds.
+#ifdef NDEBUG
+#define DYNARMIC_EXPENSIVE_ASSERT(...) ((void)0)
+#else
+#define DYNARMIC_EXPENSIVE_ASSERT(_a_) ASSERT(_a_)
+#endif
 #include "dynarmic/backend/x64/reg_alloc.h"
 #include "dynarmic/backend/x64/stack_layout.h"
 #include "dynarmic/backend/x64/verbose_debugging_output.h"
@@ -201,7 +209,7 @@ RegAlloc::ArgumentInfo RegAlloc::GetArgumentInfo(const IR::Inst* inst) noexcept 
         ret[i].value = arg;
         if (!arg.IsImmediate() && !IsValuelessType(arg.GetType())) {
             auto const loc = ValueLocation(arg.GetInst());
-            ASSERT(loc && "argument must already been defined");
+            DYNARMIC_EXPENSIVE_ASSERT(loc && "argument must already been defined");
             LocInfo(*loc).AddArgReference();
         }
     }
@@ -474,19 +482,19 @@ std::optional<HostLoc> RegAlloc::ValueLocation(const IR::Inst* value) const noex
 }
 
 void RegAlloc::DefineValueImpl(BlockOfCode& code, IR::Inst* def_inst, HostLoc host_loc) noexcept {
-    ASSERT(!ValueLocation(def_inst) && "def_inst has already been defined");
+    DYNARMIC_EXPENSIVE_ASSERT(!ValueLocation(def_inst) && "def_inst has already been defined");
     LocInfo(host_loc).AddValue(host_loc, def_inst);
-    ASSERT(*ValueLocation(def_inst) == host_loc);
+    DYNARMIC_EXPENSIVE_ASSERT(*ValueLocation(def_inst) == host_loc);
 }
 
 void RegAlloc::DefineValueImpl(BlockOfCode& code, IR::Inst* def_inst, const IR::Value& use_inst) noexcept {
-    ASSERT(!ValueLocation(def_inst) && "def_inst has already been defined");
+    DYNARMIC_EXPENSIVE_ASSERT(!ValueLocation(def_inst) && "def_inst has already been defined");
     if (use_inst.IsImmediate()) {
         const HostLoc location = ScratchImpl(code, gpr_order);
         DefineValueImpl(code, def_inst, location);
         LoadImmediate(code, use_inst, location);
     } else {
-        ASSERT(ValueLocation(use_inst.GetInst()) && "use_inst must already be defined");
+        DYNARMIC_EXPENSIVE_ASSERT(ValueLocation(use_inst.GetInst()) && "use_inst must already be defined");
         const HostLoc location = *ValueLocation(use_inst.GetInst());
         DefineValueImpl(code, def_inst, location);
     }
