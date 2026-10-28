@@ -195,12 +195,18 @@ void AuxCommand::Process(const AudioRenderer::CommandListProcessor& processor) {
                           count_max, input_buffer, processor.sample_count, write_offset,
                           update_count);
 
-        auto read{ReadAuxBufferDsp(*processor.memory, return_buffer_info, return_buffer, count_max,
-                                   output_buffer, processor.sample_count, write_offset,
-                                   update_count)};
+        // The guest may consume the send and return it into the same mix buffer, i.e. the round trip
+        // is a loopback. Reading it back then re-injects the same samples from a ring position that
+        // lags the mix, which is audible as a buzz, while the dry mix is already correct.
+        if (input != output) {
+            auto read{ReadAuxBufferDsp(*processor.memory, return_buffer_info, return_buffer, count_max,
+                                       output_buffer, processor.sample_count, write_offset,
+                                       update_count)};
 
-        if (read != processor.sample_count) {
-            std::memset(&output_buffer[read], 0, (processor.sample_count - read) * sizeof(s32));
+            if (read != processor.sample_count) {
+                std::memset(&output_buffer[read], 0,
+                            (processor.sample_count - read) * sizeof(s32));
+            }
         }
     } else {
         ResetAuxBufferDsp(*processor.memory, send_buffer_info);
