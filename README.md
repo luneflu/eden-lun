@@ -16,7 +16,7 @@
 </h1>
 
 > [!NOTE]
-> This is an Eden fork with my custom patches and AI-assisted. The patches might be unstable and mostly tested to run and optimized for Zelda: Tears of the Kingdom. Might work for other games.
+> This is an Eden fork with my custom patches and AI-assisted.
 
 <h4 align="center"><b>Eden</b> is a free and open-source (FOSS) Switch 1 emulator started by developer Camille LaVey.
 <br>
