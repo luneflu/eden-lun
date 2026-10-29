@@ -265,6 +265,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Enables GPU vendor-specific pipeline cache.\nThis option can improve shader loading "
               "time significantly in cases where the Vulkan driver does not store pipeline cache "
               "files internally."));
+    INSERT(Settings, use_pipeline_binaries, tr("Persistent Pipeline Cache (Recommended) (EXPERIMENTAL)"),
+           tr("Saves pre-compiled Vulkan pipeline binaries to disk so shaders do not need to be "
+              "recompiled every time the game restarts.\n"
+              "Warning: May cause crashes or freezes on drivers with buggy VK_KHR_pipeline_binary support."));
     INSERT(Settings, enable_compute_pipelines, tr("Enable Compute Pipelines (Intel Vulkan Only)"),
            tr("Required by some games.\nThis setting only exists for Intel "
               "proprietary drivers and may crash if enabled.\nCompute pipelines are always enabled "

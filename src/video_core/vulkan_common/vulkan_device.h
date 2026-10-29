@@ -855,7 +855,8 @@ FN_MAX_LIMIT_LIST
 
     /// Returns true if pipeline binaries are both exposed and enabled on the device.
     bool SupportsPipelineBinaries() const {
-        return extensions.pipeline_binary && features.pipeline_binary.pipelineBinaries;
+        return Settings::values.use_pipeline_binaries.GetValue() &&
+               extensions.pipeline_binary && features.pipeline_binary.pipelineBinaries;
     }
 
     /// Returns true if the device supports VK_EXT_vertex_input_dynamic_state.

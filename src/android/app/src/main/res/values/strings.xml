@@ -630,6 +630,8 @@
     <string name="disabled">Disabled</string>
     <string name="vertex_input_dynamic_state">Vertex Input Dynamic State</string>
     <string name="vertex_input_dynamic_state_description">Enabling this feature allows for more flexible vertex input handling, potentially reducing pipeline compilation time in vertex/buffer.</string>
+    <string name="renderer_use_pipeline_binaries">Persistent Pipeline Cache (Recommended) (EXPERIMENTAL)</string>
+    <string name="renderer_use_pipeline_binaries_description">Saves pre-compiled Vulkan pipeline binaries to disk so shaders do not need to be recompiled every time the game restarts. Warning: May cause crashes or freezes on drivers with buggy VK_KHR_pipeline_binary support.</string>
     <string name="sample_shading_fraction">Sample Shading</string>
     <string name="sample_shading_fraction_description">Allows the fragment shader to execute per sample in a multi-sampled fragment instead once per fragment. Improves graphics quality at the cost of some performance.</string>
 

@@ -197,6 +197,13 @@ abstract class SettingsItem(
                 )
             )
             put(
+                SwitchSetting(
+                    BooleanSetting.RENDERER_USE_PIPELINE_BINARIES,
+                    titleId = R.string.renderer_use_pipeline_binaries,
+                    descriptionId = R.string.renderer_use_pipeline_binaries_description
+                )
+            )
+            put(
                 SliderSetting(
                     IntSetting.RENDERER_SAMPLE_SHADING,
                     titleId = R.string.sample_shading_fraction,

@@ -587,6 +587,10 @@ struct Values {
         linkage, true, "use_vulkan_driver_pipeline_cache", Category::RendererAdvanced,
         Specialization::Default};
 
+    SwitchableSetting<bool> use_pipeline_binaries{
+        linkage, false, "use_pipeline_binaries", Category::RendererAdvanced,
+        Specialization::Default};
+
     SwitchableSetting<bool> enable_compute_pipelines{linkage, false, "enable_compute_pipelines",
                                                      Category::RendererAdvanced};
 
