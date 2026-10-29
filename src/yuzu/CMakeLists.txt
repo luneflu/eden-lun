@@ -411,6 +411,10 @@ endif()
 
 if (UNIX AND NOT APPLE)
     target_link_libraries(yuzu PRIVATE Qt6::DBus)
+    find_package(X11)
+    if (X11_FOUND)
+        target_link_libraries(yuzu PRIVATE -Wl,--no-as-needed ${X11_LIBRARIES} va va-drm va-x11 -Wl,--whole-archive va_compat -Wl,--no-whole-archive -Wl,--as-needed)
+    endif()
 endif()
 
 if (ENABLE_WEB_SERVICE)
