@@ -126,11 +126,11 @@ VkRect2D GetScissorState(const Maxwell& regs, size_t index, u32 up_scale = 1, u3
     };
 
     const bool lower_left = regs.window_origin.mode != Maxwell::WindowOrigin::Mode::UpperLeft;
-    const s32 clip_height = regs.surface_clip.height;
+    const s32 clip_height = scale_up(static_cast<s32>(regs.surface_clip.height));
 
     // Flip coordinates if lower left
-    s32 min_y = lower_left ? (clip_height - src.max_y) : src.min_y.Value();
-    s32 max_y = lower_left ? (clip_height - src.min_y) : src.max_y.Value();
+    s32 min_y = lower_left ? (clip_height - scale_up(static_cast<s32>(src.max_y))) : scale_up(static_cast<s32>(src.min_y.Value()));
+    s32 max_y = lower_left ? (clip_height - scale_up(static_cast<s32>(src.min_y.Value()))) : scale_up(static_cast<s32>(src.max_y));
 
     // Bound to render area
     min_y = (std::max)(min_y, 0);
@@ -138,9 +138,9 @@ VkRect2D GetScissorState(const Maxwell& regs, size_t index, u32 up_scale = 1, u3
 
     if (src.enable) {
         scissor.offset.x = scale_up(src.min_x);
-        scissor.offset.y = scale_up(min_y);
+        scissor.offset.y = min_y;
         scissor.extent.width = scale_up(src.max_x - src.min_x);
-        scissor.extent.height = scale_up(max_y - min_y);
+        scissor.extent.height = max_y - min_y;
     } else {
         scissor.offset.x = 0;
         scissor.offset.y = 0;
@@ -1192,11 +1192,23 @@ void RasterizerVulkan::UpdateViewportsState(Tegra::Engines::Maxwell3D::Regs& reg
 
     maxwell3d->dirty.flags[Dirty::Scissors] = true;
 
+    const bool is_rescaling{texture_cache.IsRescaling()};
+    const float scale = is_rescaling ? Settings::values.resolution_info.up_factor : 1.0f;
+
     if (!regs.viewport_scale_offset_enabled) {
-        float x = static_cast<float>(regs.surface_clip.x);
-        float y = static_cast<float>(regs.surface_clip.y);
-        float width = (std::max)(1.0f, static_cast<float>(regs.surface_clip.width));
-        float height = (std::max)(1.0f, static_cast<float>(regs.surface_clip.height));
+        const auto conv = [scale](float value) {
+            float new_value = value * scale;
+            if (scale < 1.0f) {
+                const bool sign = std::signbit(value);
+                new_value = std::round(std::abs(new_value));
+                new_value = sign ? -new_value : new_value;
+            }
+            return new_value;
+        };
+        float x = conv(static_cast<float>(regs.surface_clip.x));
+        float y = conv(static_cast<float>(regs.surface_clip.y));
+        float width = (std::max)(1.0f, conv(static_cast<float>(regs.surface_clip.width)));
+        float height = (std::max)(1.0f, conv(static_cast<float>(regs.surface_clip.height)));
         if (regs.window_origin.mode != Maxwell::WindowOrigin::Mode::UpperLeft) {
             y += height;
             height = -height;
@@ -1218,8 +1230,6 @@ void RasterizerVulkan::UpdateViewportsState(Tegra::Engines::Maxwell3D::Regs& reg
         });
         return;
     }
-    const bool is_rescaling{texture_cache.IsRescaling()};
-    const float scale = is_rescaling ? Settings::values.resolution_info.up_factor : 1.0f;
     const std::array viewport_list{
         GetViewportState(device, regs, 0, scale),  GetViewportState(device, regs, 1, scale),
         GetViewportState(device, regs, 2, scale),  GetViewportState(device, regs, 3, scale),
@@ -1241,19 +1251,39 @@ void RasterizerVulkan::UpdateScissorsState(Tegra::Engines::Maxwell3D::Regs& regs
     if (!state_tracker.TouchScissors()) {
         return;
     }
+    u32 up_scale = 1;
+    u32 down_shift = 0;
+    if (texture_cache.IsRescaling()) {
+        up_scale = Settings::values.resolution_info.up_scale;
+        down_shift = Settings::values.resolution_info.down_shift;
+    }
     if (!regs.viewport_scale_offset_enabled) {
-        u32 x = regs.surface_clip.x;
-        u32 y = regs.surface_clip.y;
-        u32 width = (std::max)(1u, static_cast<u32>(regs.surface_clip.width));
-        u32 height = (std::max)(1u, static_cast<u32>(regs.surface_clip.height));
+        const auto scale_up = [&](s32 value) -> s32 {
+            if (value == 0) {
+                return 0;
+            }
+            const s32 upset = value * static_cast<s32>(up_scale);
+            s32 acumm = 0;
+            if ((up_scale >> down_shift) == 0) {
+                acumm = upset % 2;
+            }
+            const s32 converted_value = (value * static_cast<s32>(up_scale)) >> down_shift;
+            return value < 0 ? std::min<s32>(converted_value - acumm, -1)
+                             : std::max<s32>(converted_value + acumm, 1);
+        };
+        const s32 clip_height = scale_up(static_cast<s32>(regs.surface_clip.height));
+        s32 x = scale_up(static_cast<s32>(regs.surface_clip.x));
+        s32 y = scale_up(static_cast<s32>(regs.surface_clip.y));
+        s32 width = (std::max)(1, scale_up(static_cast<s32>(regs.surface_clip.width)));
+        s32 height = (std::max)(1, scale_up(static_cast<s32>(regs.surface_clip.height)));
         if (regs.window_origin.mode != Maxwell::WindowOrigin::Mode::UpperLeft) {
-            y = regs.surface_clip.height - (y + height);
+            y = clip_height - (y + height);
         }
         VkRect2D scissor{};
         scissor.offset.x = static_cast<int32_t>(x);
         scissor.offset.y = static_cast<int32_t>(y);
-        scissor.extent.width  = width;
-        scissor.extent.height = height;
+        scissor.extent.width  = static_cast<u32>(width);
+        scissor.extent.height = static_cast<u32>(height);
         scheduler.Record([this, scissor](vk::CommandBuffer cmdbuf) {
             const u32 num_scissors = std::min<u32>(device.GetMaxViewports(), Maxwell::NumViewports);
             std::array<VkRect2D, Maxwell::NumViewports> scissor_list{};
@@ -1262,12 +1292,6 @@ void RasterizerVulkan::UpdateScissorsState(Tegra::Engines::Maxwell3D::Regs& regs
             cmdbuf.SetScissor(0, scissors);
         });
         return;
-    }
-    u32 up_scale = 1;
-    u32 down_shift = 0;
-    if (texture_cache.IsRescaling()) {
-        up_scale = Settings::values.resolution_info.up_scale;
-        down_shift = Settings::values.resolution_info.down_shift;
     }
     const std::array scissor_list{
         GetScissorState(regs, 0, up_scale, down_shift),
