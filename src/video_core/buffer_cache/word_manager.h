@@ -82,7 +82,9 @@ struct WordManager {
             end_page += diff * PAGES_PER_WORD;
             constexpr u64 base_mask{~0ULL};
             for (size_t word_index = start_word; word_index < end_word; word_index++) {
-                const u64 mask = ExtractBits(base_mask, start_page, end_page);
+                const u64 mask = (start_page == 0 && end_page >= PAGES_PER_WORD)
+                                     ? base_mask
+                                     : ExtractBits(base_mask, start_page, end_page);
                 start_page = 0;
                 end_page -= PAGES_PER_WORD;
                 if constexpr (std::is_same_v<FuncReturn, bool>) { // bool return
@@ -215,9 +217,18 @@ struct WordManager {
         const std::span<const u64> untracked_words = Span(Type::Untracked);
         bool result = false;
         IterateWords(offset, size, [&](size_t index, u64 mask) {
-            if (type == Type::GPU)
+            const u64 word = state_words[index];
+            if (word == 0) {
+                return false;
+            }
+            if (type == Type::GPU) {
                 mask &= ~untracked_words[index];
-            return (state_words[index] & mask) != 0 ? (result = true) : false;
+            }
+            if ((word & mask) != 0) {
+                result = true;
+                return true;
+            }
+            return false;
         });
         return result;
     }

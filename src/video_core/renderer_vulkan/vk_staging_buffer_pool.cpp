@@ -35,6 +35,8 @@ constexpr VkDeviceSize MAX_ALIGNMENT = 256;
 // - GT 1030 on ^NIX will OOM with 256mib
 #if defined(__FreeBSD__)
 constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 128_MiB;
+#elif defined(_WIN64)
+constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 512_MiB;
 #else
 constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 256_MiB;
 #endif
