@@ -2636,6 +2636,11 @@ void TextureCache<P>::PrepareImageView(ImageViewId image_view_id, bool is_modifi
     if (image_view.IsBuffer()) {
         return;
     }
+    const Image& image = slot_images[image_view.image_id];
+    if (!is_modification && !invalidate && image.lru_touch_frame == frame_tick &&
+        False(image.flags & ImageFlagBits::CpuModified) && image.aliased_images.empty()) [[likely]] {
+        return;
+    }
     PrepareImage(image_view.image_id, is_modification, invalidate);
 }
 
