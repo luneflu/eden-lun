@@ -134,9 +134,13 @@ void DmaPusher::ProcessCommands(std::span<const CommandHeader> commands) {
                 while (run < available && !subchannel->execution_mask[method + run]) {
                     ++run;
                 }
-                if (run > 1) {
+                if (run > 0) {
                     dma_state.dma_word_offset = u32(index * sizeof(u32));
-                    subchannel->PushMethodRun(method, &run_header.argument, run);
+                    if (run == 1) {
+                        subchannel->PushMethod(method, run_header.argument);
+                    } else {
+                        subchannel->PushMethodRun(method, &run_header.argument, run);
+                    }
                     dma_state.method = method + run;
                     dma_state.method_count -= run;
                     dma_state.is_last_call = dma_state.method_count <= 1;
@@ -194,7 +198,7 @@ void DmaPusher::SetState(const CommandHeader& command_header) {
 }
 
 void DmaPusher::CallMethod(u32 argument) {
-    if (dma_state.method < non_puller_methods) {
+    if (dma_state.method < non_puller_methods) [[unlikely]] {
         puller.CallPullerMethod(*this, Engines::Puller::MethodCall{
             dma_state.method,
             argument,
@@ -202,8 +206,8 @@ void DmaPusher::CallMethod(u32 argument) {
             dma_state.method_count,
         });
     } else {
-        auto subchannel = subchannels[dma_state.subchannel];
-        if (!subchannel->execution_mask[dma_state.method]) {
+        auto* const subchannel = subchannels[dma_state.subchannel];
+        if (!subchannel->execution_mask[dma_state.method]) [[likely]] {
             subchannel->PushMethod(dma_state.method, argument);
         } else {
             subchannel->ConsumeSink(system);
