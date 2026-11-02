@@ -120,15 +120,19 @@ Buffer::Buffer(BufferCacheRuntime& runtime, DAddr cpu_addr_, u64 size_bytes_,
 }
 
 void Buffer::MarkUsage(u64 offset, u64 size) noexcept {
-    for (u8 i = 0; i < tracked_count; ++i) {
+    if (tracked_count > 0 && tracked_ranges[0].offset == offset && tracked_ranges[0].size == size) [[likely]] {
+        return;
+    }
+    for (u8 i = 1; i < tracked_count; ++i) {
         if (tracked_ranges[i].offset == offset && tracked_ranges[i].size == size) {
-            last_usage_tick = scheduler->CurrentTick();
+            std::swap(tracked_ranges[0], tracked_ranges[i]);
             return;
         }
     }
     tracker.Track(offset, size);
     if (tracked_count < 4) {
         tracked_ranges[tracked_count++] = {offset, size};
+        std::swap(tracked_ranges[0], tracked_ranges[tracked_count - 1]);
     } else {
         tracked_ranges[0] = {offset, size};
     }

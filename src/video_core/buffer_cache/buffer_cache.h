@@ -1732,16 +1732,6 @@ void BufferCache<P>::ChangeRegister(BufferId buffer_id) {
 }
 
 template <class P>
-void BufferCache<P>::TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept {
-    if (buffer_id != NULL_BUFFER_ID) {
-        if (buffer.lru_touch_frame != frame_tick) {
-            buffer.lru_touch_frame = frame_tick;
-            lru_cache.Touch(buffer.getLRUID(), frame_tick);
-        }
-    }
-}
-
-template <class P>
 bool BufferCache<P>::SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size) {
 #ifdef __ANDROID__
     const bool use_optimized_vertex_buffers = Settings::values.use_optimized_vertex_buffers.GetValue();

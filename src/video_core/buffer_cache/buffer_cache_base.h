@@ -455,7 +455,12 @@ private:
     template <bool insert>
     void ChangeRegister(BufferId buffer_id);
 
-    void TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept;
+    inline void TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept {
+        if (buffer_id != NULL_BUFFER_ID && buffer.lru_touch_frame != frame_tick) [[unlikely]] {
+            buffer.lru_touch_frame = frame_tick;
+            lru_cache.Touch(buffer.getLRUID(), frame_tick);
+        }
+    }
 
     bool SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size);
 
