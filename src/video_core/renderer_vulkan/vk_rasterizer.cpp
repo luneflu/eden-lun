@@ -234,6 +234,7 @@ RasterizerVulkan::~RasterizerVulkan() {
 
 template <typename Func>
 void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
+    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
 
     SCOPE_EXIT {
         gpu.TickWork();
@@ -245,7 +246,6 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     if (!pipeline) {
         return;
     }
-    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
     // update engine as channel may be different.
     pipeline->SetEngine(maxwell3d, gpu_memory, program_id);
     attribute_handle_pipeline = nullptr;

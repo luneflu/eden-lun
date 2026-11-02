@@ -223,6 +223,8 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
 
 template <typename Func>
 void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
+    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+
     SCOPE_EXIT {
         gpu.TickWork();
     };
@@ -235,7 +237,6 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
 
     gpu.TickWork();
 
-    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
     if (pipeline->UsesLocalMemory()) {
         program_manager.LocalMemoryWarmup();
     }
