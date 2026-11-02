@@ -52,7 +52,52 @@ public:
     /// Binds a renderer to the memory manager.
     void BindRasterizer(VideoCore::RasterizerInterface* rasterizer);
 
-    [[nodiscard]] std::optional<DAddr> GpuToCpuAddress(GPUVAddr addr) const;
+    static constexpr DAddr kInvalidDAddr = ~DAddr{0};
+
+    struct TranslationCacheEntry {
+        u64 key{0};
+        u64 base{kInvalidDAddr};
+    };
+
+    static constexpr size_t kTranslateCacheEntries = 1024;
+
+    struct ThreadTranslationCache {
+        u32 generation{~0U};
+        std::array<TranslationCacheEntry, kTranslateCacheEntries> big{};
+    };
+
+    [[nodiscard]] DAddr GpuToCpuAddressSlow(GPUVAddr gpu_addr) const;
+
+    [[nodiscard]] inline DAddr GpuToCpuAddressRaw(GPUVAddr gpu_addr) const noexcept {
+        if (!IsWithinGPUAddressRange(gpu_addr)) [[unlikely]] {
+            return kInvalidDAddr;
+        }
+        const u32 gen = translation_generation.load(std::memory_order_relaxed);
+        if ((gen & 1) != 0) [[unlikely]] {
+            return GpuToCpuAddressSlow(gpu_addr);
+        }
+        static thread_local ThreadTranslationCache cache{};
+        if (cache.generation != gen) [[unlikely]] {
+            cache.generation = gen;
+            cache.big.fill(TranslationCacheEntry{});
+        }
+        const size_t big_index = (gpu_addr >> big_page_bits) & big_page_table_mask;
+        const u64 key = (static_cast<u64>(unique_identifier) << 32) | static_cast<u32>(big_index);
+        const size_t slot = (big_index ^ (big_index >> 10)) & (kTranslateCacheEntries - 1);
+        const TranslationCacheEntry& entry = cache.big[slot];
+        if (entry.key == key && entry.base != kInvalidDAddr) [[likely]] {
+            return entry.base + (gpu_addr & big_page_mask);
+        }
+        return GpuToCpuAddressSlow(gpu_addr);
+    }
+
+    [[nodiscard]] inline std::optional<DAddr> GpuToCpuAddress(GPUVAddr addr) const noexcept {
+        const DAddr raw = GpuToCpuAddressRaw(addr);
+        if (raw == kInvalidDAddr) [[unlikely]] {
+            return std::nullopt;
+        }
+        return raw;
+    }
 
     [[nodiscard]] std::optional<DAddr> GpuToCpuAddress(GPUVAddr addr, std::size_t size) const;
 

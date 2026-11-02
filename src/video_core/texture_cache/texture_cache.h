@@ -1258,12 +1258,13 @@ ImageId TextureCache<P>::FindOrInsertImage(const ImageInfo& info, GPUVAddr gpu_a
 template <class P>
 ImageId TextureCache<P>::FindImage(const ImageInfo& info, GPUVAddr gpu_addr,
                                    RelaxedOptions options) {
-    std::optional<DAddr> cpu_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-    if (!cpu_addr) {
-        cpu_addr = gpu_memory->GpuToCpuAddress(gpu_addr, CalculateGuestSizeInBytes(info));
-        if (!cpu_addr) {
+    DAddr cpu_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+    if (cpu_addr == Tegra::MemoryManager::kInvalidDAddr) {
+        const auto opt = gpu_memory->GpuToCpuAddress(gpu_addr, CalculateGuestSizeInBytes(info));
+        if (!opt) {
             return ImageId{};
         }
+        cpu_addr = *opt;
     }
     const bool broken_views =
         runtime.HasBrokenTextureViewFormats() || True(options & RelaxedOptions::ForceBrokenViews);
@@ -1296,7 +1297,7 @@ ImageId TextureCache<P>::FindImage(const ImageInfo& info, GPUVAddr gpu_addr,
         }
         return false;
     };
-    ForEachImageInRegion(*cpu_addr, CalculateGuestSizeInBytes(info), lambda);
+    ForEachImageInRegion(cpu_addr, CalculateGuestSizeInBytes(info), lambda);
     if (image_ids.size() <= 1) [[likely]] {
         return image_id;
     }
@@ -1561,18 +1562,19 @@ bool TextureCache<P>::ScaleDown(Image& image) {
 template <class P>
 ImageId TextureCache<P>::InsertImage(const ImageInfo& info, GPUVAddr gpu_addr,
                                      RelaxedOptions options) {
-    std::optional<DAddr> cpu_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-    if (!cpu_addr) {
+    DAddr cpu_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+    if (cpu_addr == Tegra::MemoryManager::kInvalidDAddr) {
         const auto size = CalculateGuestSizeInBytes(info);
-        cpu_addr = gpu_memory->GpuToCpuAddress(gpu_addr, size);
-        if (!cpu_addr) {
+        const auto opt = gpu_memory->GpuToCpuAddress(gpu_addr, size);
+        if (opt) {
+            cpu_addr = *opt;
+        } else {
             const DAddr fake_addr = ~(1ULL << 40ULL) + virtual_invalid_space;
             virtual_invalid_space += Common::AlignUp(size, 32);
-            cpu_addr = std::optional<DAddr>(fake_addr);
+            cpu_addr = fake_addr;
         }
     }
-    ASSERT_MSG(cpu_addr, "Tried to insert an image to an invalid gpu_addr={:#x}", gpu_addr);
-    const ImageId image_id = JoinImages(info, gpu_addr, *cpu_addr);
+    const ImageId image_id = JoinImages(info, gpu_addr, cpu_addr);
     const Image& image = slot_images[image_id];
     // Using "image.gpu_addr" instead of "gpu_addr" is important because it might be different
     const auto [it, is_new] = image_allocs_table.try_emplace(image.gpu_addr);

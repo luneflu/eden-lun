@@ -1337,18 +1337,18 @@ void BufferCache<P>::UpdateIndexBuffer() {
 
     const GPUVAddr gpu_addr_begin = index_buffer_ref.StartAddress();
     const GPUVAddr gpu_addr_end = index_buffer_ref.EndAddress();
-    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr_begin);
+    const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr_begin);
     const u32 address_size = static_cast<u32>(gpu_addr_end - gpu_addr_begin);
     const u32 draw_size = (index_buffer_ref.count + index_buffer_ref.first) * u32(index_buffer_ref.FormatSizeInBytes());
     const u32 size = (std::min)(address_size, draw_size);
-    if (size == 0 || !device_addr) {
+    if (size == 0 || device_addr == Tegra::MemoryManager::kInvalidDAddr) {
         channel_state->index_buffer = NULL_BINDING;
         return;
     }
     channel_state->index_buffer = Binding{
-        .device_addr = *device_addr,
+        .device_addr = device_addr,
         .size = size,
-        .buffer_id = FindBuffer(*device_addr, size, false),
+        .buffer_id = FindBuffer(device_addr, size, false),
     };
 }
 
@@ -1374,10 +1374,10 @@ void BufferCache<P>::UpdateVertexBuffer(u32 index) {
     const auto& limit = maxwell3d->regs.vertex_stream_limits[index];
     const GPUVAddr gpu_addr_begin = array.Address();
     const GPUVAddr gpu_addr_end = limit.Address() + 1;
-    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr_begin);
+    const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr_begin);
     const u32 address_size = static_cast<u32>(gpu_addr_end - gpu_addr_begin);
     u32 size = address_size; // TODO: Analyze stride and number of vertices
-    if (array.enable == 0 || size == 0 || !device_addr) {
+    if (array.enable == 0 || size == 0 || device_addr == Tegra::MemoryManager::kInvalidDAddr) {
         channel_state->vertex_buffers[index] = NULL_BINDING;
         UpdateVertexBufferSlot(index, NULL_BINDING);
         return;
@@ -1385,9 +1385,9 @@ void BufferCache<P>::UpdateVertexBuffer(u32 index) {
     if (!gpu_memory->IsWithinGPUAddressRange(gpu_addr_end) || size >= 64_MiB) {
         size = static_cast<u32>(gpu_memory->MaxContinuousRange(gpu_addr_begin, size));
     }
-    const BufferId buffer_id = FindBuffer(*device_addr, size, false);
+    const BufferId buffer_id = FindBuffer(device_addr, size, false);
     const Binding binding{
-        .device_addr = *device_addr,
+        .device_addr = device_addr,
         .size = size,
         .buffer_id = buffer_id,
     };
@@ -1398,15 +1398,15 @@ void BufferCache<P>::UpdateVertexBuffer(u32 index) {
 template <class P>
 void BufferCache<P>::UpdateDrawIndirect() {
     const auto update = [this](GPUVAddr gpu_addr, size_t size, Binding& binding) {
-        const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-        if (!device_addr) {
+        const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+        if (device_addr == Tegra::MemoryManager::kInvalidDAddr) {
             binding = NULL_BINDING;
             return;
         }
         binding = Binding{
-            .device_addr = *device_addr,
+            .device_addr = device_addr,
             .size = static_cast<u32>(size),
-            .buffer_id = FindBuffer(*device_addr, static_cast<u32>(size), false),
+            .buffer_id = FindBuffer(device_addr, static_cast<u32>(size), false),
         };
     };
     if (current_draw_indirect->include_count) {
@@ -1490,9 +1490,9 @@ void BufferCache<P>::UpdateComputeUniformBuffers() {
         const auto& launch_desc = kepler_compute->launch_description;
         if (((launch_desc.const_buffer_enable_mask >> index) & 1) != 0) {
             const auto& cbuf = launch_desc.const_buffer_config[index];
-            const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(cbuf.Address());
-            if (device_addr) {
-                binding.device_addr = *device_addr;
+            const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(cbuf.Address());
+            if (device_addr != Tegra::MemoryManager::kInvalidDAddr) {
+                binding.device_addr = device_addr;
                 binding.size = cbuf.size;
             }
         }

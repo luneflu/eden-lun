@@ -207,30 +207,12 @@ void MemoryManager::Unmap(GPUVAddr gpu_addr, std::size_t size) {
     PageTableOp(gpu_addr, 0, size, PTEKind::INVALID, EntryType::Free);
 }
 
-std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
+__declspec(noinline) DAddr MemoryManager::GpuToCpuAddressSlow(GPUVAddr gpu_addr) const {
     if (!IsWithinGPUAddressRange(gpu_addr)) [[unlikely]] {
-        return std::nullopt;
+        return kInvalidDAddr;
     }
-    // Page keyed translation cache. Uniform/vertex/index buffers are re-bound on every draw
-    // but live in the same handful of pages, so caching the page -> host address mapping keeps
-    // the sparse page table lookups out of the per-draw path. The cache is thread local, the
-    // generation counter invalidates it whenever the page tables change.
-    struct CacheEntry {
-        u64 instance{};
-        u64 index{};
-        u64 base{};
-        u32 generation{};
-        bool mapped{};
-    };
-    static constexpr size_t kCacheEntries = 2048;
-    struct TranslateCache {
-        std::array<CacheEntry, kCacheEntries> big{};
-        std::array<CacheEntry, kCacheEntries> short_table{};
-    };
-    static thread_local TranslateCache cache{};
-
-    const u32 gen_start{translation_generation.load(std::memory_order_acquire)};
-    if ((gen_start & 1) != 0) [[unlikely]] {
+    const u32 gen = translation_generation.load(std::memory_order_acquire);
+    if ((gen & 1) != 0) [[unlikely]] {
         if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
             const size_t big_index{PageEntryIndex(gpu_addr, true)};
             return (DAddr(big_page_table_dev[big_index]) << cpu_page_bits) + (gpu_addr & big_page_mask);
@@ -239,51 +221,29 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
             const size_t short_index{PageEntryIndex(gpu_addr, false)};
             return (DAddr(page_table[short_index]) << cpu_page_bits) + (gpu_addr & page_mask);
         }
-        return std::nullopt;
+        return kInvalidDAddr;
     }
 
-    const size_t big_index{PageEntryIndex(gpu_addr, true)};
-    const size_t big_slot{(big_index ^ (big_index >> 11)) & (kCacheEntries - 1)};
-    CacheEntry& big_entry{cache.big[big_slot]};
-    if (big_entry.instance == unique_identifier && big_entry.generation == gen_start &&
-        big_entry.index == big_index) {
-        if (big_entry.mapped) {
-            return DAddr(big_entry.base) + (gpu_addr & big_page_mask);
+    if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
+        const size_t big_index{PageEntryIndex(gpu_addr, true)};
+        const DAddr dev_addr_base = DAddr(big_page_table_dev[big_index]) << cpu_page_bits;
+        static thread_local ThreadTranslationCache cache{};
+        if (cache.generation != gen) {
+            cache.generation = gen;
+            cache.big.fill(TranslationCacheEntry{});
         }
-    } else {
-        if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
-            const DAddr dev_addr_base = DAddr(big_page_table_dev[big_index]) << cpu_page_bits;
-            if (translation_generation.load(std::memory_order_acquire) == gen_start) {
-                big_entry = CacheEntry{unique_identifier, big_index, dev_addr_base, gen_start, true};
-            }
-            return dev_addr_base + (gpu_addr & big_page_mask);
-        }
-        if (translation_generation.load(std::memory_order_acquire) == gen_start) {
-            big_entry = CacheEntry{unique_identifier, big_index, 0, gen_start, false};
-        }
+        const u64 key = (static_cast<u64>(unique_identifier) << 32) | static_cast<u32>(big_index);
+        const size_t slot = (big_index ^ (big_index >> 10)) & (kTranslateCacheEntries - 1);
+        cache.big[slot] = TranslationCacheEntry{key, dev_addr_base};
+        return dev_addr_base + (gpu_addr & big_page_mask);
     }
 
-    const size_t short_index{PageEntryIndex(gpu_addr, false)};
-    const size_t short_slot{(short_index ^ (short_index >> 11)) & (kCacheEntries - 1)};
-    CacheEntry& short_entry{cache.short_table[short_slot]};
-    if (short_entry.instance == unique_identifier && short_entry.generation == gen_start &&
-        short_entry.index == short_index) {
-        if (!short_entry.mapped) {
-            return std::nullopt;
-        }
-        return DAddr(short_entry.base) + (gpu_addr & page_mask);
+    if (GetEntry(gpu_addr, false) == EntryType::Mapped) {
+        const size_t short_index{PageEntryIndex(gpu_addr, false)};
+        return (DAddr(page_table[short_index]) << cpu_page_bits) + (gpu_addr & page_mask);
     }
-    if (GetEntry(gpu_addr, false) != EntryType::Mapped) {
-        if (translation_generation.load(std::memory_order_acquire) == gen_start) {
-            short_entry = CacheEntry{unique_identifier, short_index, 0, gen_start, false};
-        }
-        return std::nullopt;
-    }
-    const DAddr dev_addr_base = DAddr(page_table[short_index]) << cpu_page_bits;
-    if (translation_generation.load(std::memory_order_acquire) == gen_start) {
-        short_entry = CacheEntry{unique_identifier, short_index, dev_addr_base, gen_start, true};
-    }
-    return dev_addr_base + (gpu_addr & page_mask);
+
+    return kInvalidDAddr;
 }
 
 std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr addr, std::size_t size) const {
