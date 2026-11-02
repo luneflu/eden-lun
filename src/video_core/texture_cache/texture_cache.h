@@ -1881,12 +1881,13 @@ std::optional<typename TextureCache<P>::BlitImages> TextureCache<P>::GetBlitImag
 
 template <class P>
 ImageId TextureCache<P>::FindDMAImage(const ImageInfo& info, GPUVAddr gpu_addr) {
-    std::optional<DAddr> cpu_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-    if (!cpu_addr) {
-        cpu_addr = gpu_memory->GpuToCpuAddress(gpu_addr, CalculateGuestSizeInBytes(info));
-        if (!cpu_addr) {
+    DAddr cpu_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+    if (cpu_addr == Tegra::MemoryManager::kInvalidDAddr) {
+        const auto opt = gpu_memory->GpuToCpuAddress(gpu_addr, CalculateGuestSizeInBytes(info));
+        if (!opt) {
             return ImageId{};
         }
+        cpu_addr = *opt;
     }
     ImageId image_id{};
     boost::container::small_vector<ImageId, 8> image_ids;
@@ -1913,7 +1914,7 @@ ImageId TextureCache<P>::FindDMAImage(const ImageInfo& info, GPUVAddr gpu_addr) 
         }
         return false;
     };
-    ForEachImageInRegion(*cpu_addr, CalculateGuestSizeInBytes(info), lambda);
+    ForEachImageInRegion(cpu_addr, CalculateGuestSizeInBytes(info), lambda);
     if (image_ids.size() <= 1) [[likely]] {
         return image_id;
     }
@@ -2217,14 +2218,14 @@ void TextureCache<P>::ForEachSparseSegment(ImageBase& image, Func&& func) {
     constexpr bool RETURNS_BOOL = std::is_same_v<FuncReturn, bool>;
     const auto segments = gpu_memory->GetSubmappedRange(image.gpu_addr, image.guest_size_bytes);
     for (const auto& [gpu_addr, size] : segments) {
-        std::optional<DAddr> cpu_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-        ASSERT(cpu_addr);
+        const DAddr cpu_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+        ASSERT(cpu_addr != Tegra::MemoryManager::kInvalidDAddr);
         if constexpr (RETURNS_BOOL) {
-            if (func(gpu_addr, *cpu_addr, size)) {
+            if (func(gpu_addr, cpu_addr, size)) {
                 break;
             }
         } else {
-            func(gpu_addr, *cpu_addr, size);
+            func(gpu_addr, cpu_addr, size);
         }
     }
 }

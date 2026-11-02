@@ -1469,14 +1469,14 @@ void BufferCache<P>::UpdateTransformFeedbackBuffer(u32 index) {
     const auto& binding = maxwell3d->regs.transform_feedback.buffers[index];
     const GPUVAddr gpu_addr = binding.Address() + binding.start_offset;
     const u32 size = binding.size;
-    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-    if (binding.enable == 0 || size == 0 || !device_addr) {
+    const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+    if (binding.enable == 0 || size == 0 || device_addr == Tegra::MemoryManager::kInvalidDAddr) {
         channel_state->transform_feedback_buffers[index] = NULL_BINDING;
         return;
     }
-    const BufferId buffer_id = FindBuffer(*device_addr, size, false);
+    const BufferId buffer_id = FindBuffer(device_addr, size, false);
     channel_state->transform_feedback_buffers[index] = Binding{
-        .device_addr = *device_addr,
+        .device_addr = device_addr,
         .size = size,
         .buffer_id = buffer_id,
     };
@@ -2057,23 +2057,23 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
     const GPUVAddr aligned_gpu_addr = Common::AlignDown(gpu_addr, alignment);
     const u32 aligned_size = static_cast<u32>(gpu_addr - aligned_gpu_addr) + size;
 
-    const std::optional<DAddr> aligned_device_addr = gpu_memory->GpuToCpuAddress(aligned_gpu_addr);
-    if (!aligned_device_addr || size == 0) {
+    const DAddr aligned_device_addr = gpu_memory->GpuToCpuAddressRaw(aligned_gpu_addr);
+    if (aligned_device_addr == Tegra::MemoryManager::kInvalidDAddr || size == 0) {
         LOG_DEBUG(HW_GPU, "Failed to find storage buffer for cbuf index {}", cbuf_index);
         return NULL_BINDING;
     }
-    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-    ASSERT_MSG(device_addr, "Unaligned storage buffer address not found for cbuf index {}",
+    const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+    ASSERT_MSG(device_addr != Tegra::MemoryManager::kInvalidDAddr, "Unaligned storage buffer address not found for cbuf index {}",
                cbuf_index);
     // The end address used for size calculation does not need to be aligned
-    const DAddr cpu_end = Common::AlignUp(*device_addr + size, Core::DEVICE_PAGESIZE);
+    const DAddr cpu_end = Common::AlignUp(device_addr + size, Core::DEVICE_PAGESIZE);
 
-    u32 binding_size = static_cast<u32>(cpu_end - *aligned_device_addr);
+    u32 binding_size = static_cast<u32>(cpu_end - aligned_device_addr);
     if (is_written) {
         binding_size = aligned_size;
     }
     const Binding binding{
-        .device_addr = *aligned_device_addr,
+        .device_addr = aligned_device_addr,
         .gpu_addr = aligned_gpu_addr,
         .size = binding_size,
         .buffer_id = BufferId{},
@@ -2084,15 +2084,15 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
 template <class P>
 TextureBufferBinding BufferCache<P>::GetTextureBufferBinding(GPUVAddr gpu_addr, u32 size,
                                                              PixelFormat format) {
-    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+    const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
     TextureBufferBinding binding;
-    if (!device_addr || size == 0) {
+    if (device_addr == Tegra::MemoryManager::kInvalidDAddr || size == 0) {
         binding.device_addr = 0;
         binding.size = 0;
         binding.buffer_id = NULL_BUFFER_ID;
         binding.format = PixelFormat::Invalid;
     } else {
-        binding.device_addr = *device_addr;
+        binding.device_addr = device_addr;
         binding.size = size;
         binding.buffer_id = BufferId{};
         binding.format = format;
