@@ -88,7 +88,7 @@ void Scheduler::DispatchWork() {
             std::scoped_lock ql{queue_mutex};
             work_queue.push(std::move(chunk));
         }
-        event_cv.notify_all();
+        event_cv.notify_one();
         AcquireNewChunk();
     }
 }
@@ -278,7 +278,9 @@ void Scheduler::WorkerThread(std::stop_token stop_token) {
 
         work = std::move(work_queue.front());
         work_queue.pop();
-        event_cv.notify_all();
+        if (work_queue.empty()) {
+            event_cv.notify_all();
+        }
         return true;
     }};
 
