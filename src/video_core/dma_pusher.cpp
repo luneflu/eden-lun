@@ -125,8 +125,8 @@ void DmaPusher::ProcessCommands(std::span<const CommandHeader> commands) {
         } else if (dma_state.method_count) {
             auto const& run_header = commands[index];
             // Coalesce a run of non-executable register writes into one virtual call.
-            if (dma_state.method >= non_puller_methods) {
-                auto subchannel = subchannels[dma_state.subchannel];
+            if (dma_state.method >= non_puller_methods) [[likely]] {
+                auto* const subchannel = subchannels[dma_state.subchannel];
                 const u32 method = dma_state.method;
                 const u32 available =
                     u32(std::min<std::size_t>(dma_state.method_count, commands.size() - index));
@@ -147,6 +147,17 @@ void DmaPusher::ProcessCommands(std::span<const CommandHeader> commands) {
                     index += run;
                     continue;
                 }
+                // When run == 0, method is executable
+                dma_state.dma_word_offset = u32(index * sizeof(u32));
+                dma_state.is_last_call = dma_state.method_count <= 1;
+                subchannel->ConsumeSink(system);
+                subchannel->current_dma_segment = dma_state.dma_get + dma_state.dma_word_offset;
+                subchannel->CallMethod(system, method, run_header.argument, dma_state.is_last_call);
+                dma_state.method += !dma_state.non_incrementing ? 1 : 0;
+                dma_state.non_incrementing |= dma_increment_once;
+                dma_state.method_count--;
+                index++;
+                continue;
             }
             auto const command_header = commands[index]; //can copy
             dma_state.dma_word_offset = u32(index * sizeof(u32));
