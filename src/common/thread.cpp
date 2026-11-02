@@ -598,10 +598,13 @@ DWORD_PTR WindowsCoreMask(bool performance) {
     if (const char* override_value = std::getenv(performance ? "EDEN_PERF_MASK" : "EDEN_EFF_MASK")) {
         return static_cast<DWORD_PTR>(std::strtoull(override_value, nullptr, 16));
     }
+    const WindowsCoreMasks& masks = GetWindowsCoreMasks();
+    if (!performance && masks.smt != 0) {
+        return masks.smt;
+    }
     if (std::getenv("EDEN_AFFINITY") == nullptr) {
         return 0;
     }
-    const WindowsCoreMasks& masks = GetWindowsCoreMasks();
     return performance ? masks.physical : masks.smt;
 }
 
