@@ -224,8 +224,7 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
     };
     static constexpr size_t kCacheEntries = 2048;
     struct TranslateCache {
-        std::array<CacheEntry, 4> mru_big{};
-        u8 mru_index{};
+        CacheEntry mru_big{};
         std::array<CacheEntry, kCacheEntries> big{};
         std::array<CacheEntry, kCacheEntries> short_table{};
     };
@@ -245,11 +244,10 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
     }
 
     const size_t big_index{PageEntryIndex(gpu_addr, true)};
-    for (const auto& mru : cache.mru_big) {
-        if (mru.instance == unique_identifier && mru.generation == gen_start &&
-            mru.index == big_index && mru.mapped) [[likely]] {
-            return DAddr(mru.base) + (gpu_addr & big_page_mask);
-        }
+    CacheEntry& mru{cache.mru_big};
+    if (mru.instance == unique_identifier && mru.generation == gen_start &&
+        mru.index == big_index && mru.mapped) [[likely]] {
+        return DAddr(mru.base) + (gpu_addr & big_page_mask);
     }
 
     const size_t big_slot{(big_index ^ (big_index >> 11)) & (kCacheEntries - 1)};
@@ -257,7 +255,7 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
     if (big_entry.instance == unique_identifier && big_entry.generation == gen_start &&
         big_entry.index == big_index) {
         if (big_entry.mapped) {
-            cache.mru_big[cache.mru_index++ & 3] = big_entry;
+            mru = big_entry;
             return DAddr(big_entry.base) + (gpu_addr & big_page_mask);
         }
     } else {
@@ -265,7 +263,7 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
             const DAddr dev_addr_base = DAddr(big_page_table_dev[big_index]) << cpu_page_bits;
             if (translation_generation.load(std::memory_order_acquire) == gen_start) {
                 big_entry = CacheEntry{unique_identifier, big_index, dev_addr_base, gen_start, true};
-                cache.mru_big[cache.mru_index++ & 3] = big_entry;
+                mru = big_entry;
             }
             return dev_addr_base + (gpu_addr & big_page_mask);
         }
