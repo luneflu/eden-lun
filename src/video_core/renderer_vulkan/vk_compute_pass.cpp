@@ -706,12 +706,14 @@ void BlockLinearUnswizzle3DPass::Unswizzle(
 {
     using namespace VideoCommon::Accelerated;
 
-    const u32 MAX_BATCH_SLICES = (std::min)(z_count, image.info.size.depth);
+    const bool is_initialized = image.ExchangeInitialization();
+    const u32 total_slices = (z_count == 0) ? image.info.size.depth : z_count;
+    const u32 MAX_BATCH_SLICES = (std::min)(total_slices, image.info.size.depth);
 
     // Allocate or grow to cover this batch's slice count
     image.AllocateComputeUnswizzleBuffer(MAX_BATCH_SLICES);
 
-    ASSERT(swizzles.size() == 1);
+    ASSERT(!swizzles.empty());
     const auto& sw = swizzles[0];
     const auto params = MakeBlockLinearSwizzle3DParams(sw, image.info);
 
@@ -719,12 +721,12 @@ void BlockLinearUnswizzle3DPass::Unswizzle(
     const u32 blocks_y = (image.info.size.height + 3) / 4;
 
     scheduler.RequestOutsideRenderPassOperationContext();
-    for (u32 z_offset = 0; z_offset < z_count; z_offset += MAX_BATCH_SLICES) {
-        const u32 current_chunk_slices = (std::min)(MAX_BATCH_SLICES, z_count - z_offset);
+    for (u32 z_offset = 0; z_offset < total_slices; z_offset += MAX_BATCH_SLICES) {
+        const u32 current_chunk_slices = (std::min)(MAX_BATCH_SLICES, total_slices - z_offset);
         const u32 current_z_start = z_start + z_offset;
 
         UnswizzleChunk(image, swizzled, sw, params, blocks_x, blocks_y,
-                       current_z_start, current_chunk_slices);
+                       current_z_start, current_chunk_slices, is_initialized);
     }
 }
 
@@ -734,7 +736,8 @@ void BlockLinearUnswizzle3DPass::UnswizzleChunk(
     const VideoCommon::SwizzleParameters& sw,
     const BlockLinearSwizzle3DParams& params,
     u32 blocks_x, u32 blocks_y,
-    u32 z_start, u32 z_count)
+    u32 z_start, u32 z_count,
+    bool is_initialized)
 {
     BlockLinearUnswizzle3DPushConstants pc{};
     pc.origin[0] = params.origin[0];
@@ -787,7 +790,7 @@ void BlockLinearUnswizzle3DPass::UnswizzleChunk(
 
     scheduler.Record([this, set, descriptor_data, pc, gx, gy, gz, z_start, z_count,
                       barrier_size, is_first_chunk, out_buffer, dst_image, aspect,
-                      image_width, image_height
+                      image_width, image_height, is_initialized
                       ](vk::CommandBuffer cmdbuf) {
 
         if (dst_image == VK_NULL_HANDLE || out_buffer == VK_NULL_HANDLE) {
@@ -813,15 +816,20 @@ void BlockLinearUnswizzle3DPass::UnswizzleChunk(
             .size = barrier_size,
         };
 
+        const VkAccessFlags pre_src_access = is_first_chunk
+            ? (is_initialized ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT) : VkAccessFlags{})
+            : static_cast<VkAccessFlags>(VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkImageLayout pre_layout = is_first_chunk
+            ? (is_initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED)
+            : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
         // Image layout transition
         const VkImageMemoryBarrier pre_barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
-            .srcAccessMask = is_first_chunk ? VkAccessFlags{} :
-                            static_cast<VkAccessFlags>(VK_ACCESS_TRANSFER_WRITE_BIT),
+            .srcAccessMask = pre_src_access,
             .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .oldLayout = is_first_chunk ? VK_IMAGE_LAYOUT_UNDEFINED :
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .oldLayout = pre_layout,
             .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -865,7 +873,8 @@ void BlockLinearUnswizzle3DPass::UnswizzleChunk(
 
         cmdbuf.PipelineBarrier(
             VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
             0,
             nullptr, nullptr, post_barrier
         );

@@ -89,9 +89,7 @@ public:
 
     void ConvertImage(Framebuffer* dst, ImageView& dst_view, ImageView& src_view);
 
-    bool CanAccelerateImageUpload(Image&) const noexcept {
-        return false;
-    }
+    bool CanAccelerateImageUpload(const Image& image) const noexcept;
 
     bool CanUploadMSAA() const noexcept {
         return true;
@@ -395,6 +393,16 @@ private:
     std::unique_ptr<ImageView> scale_view;
     std::unique_ptr<ImageView> normal_view;
 };
+
+inline bool TextureCacheRuntime::CanAccelerateImageUpload(const Image& image) const noexcept {
+    return Settings::values.gpu_unswizzle_enabled.GetValue() &&
+           bl3d_unswizzle_pass.has_value() &&
+           VideoCore::Surface::IsPixelFormatBCn(image.info.format) &&
+           (image.info.type == VideoCommon::ImageType::e2D ||
+            image.info.type == VideoCommon::ImageType::e3D) &&
+           image.info.resources.levels == 1 &&
+           image.info.resources.layers == 1;
+}
 
 class ImageView : public VideoCommon::ImageViewBase {
 public:

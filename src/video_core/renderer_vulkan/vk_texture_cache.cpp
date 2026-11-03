@@ -1899,6 +1899,9 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
         flags |= VideoCommon::ImageFlagBits::Converted;
         flags |= VideoCommon::ImageFlagBits::CostlyLoad;
     }
+    if (runtime_.CanAccelerateImageUpload(*this)) {
+        flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
+    }
     if (runtime->device.HasDebuggingToolAttached()) {
         original_image.SetObjectNameEXT(VideoCommon::Name(*this).c_str());
     }
@@ -3152,7 +3155,9 @@ void TextureCacheRuntime::AccelerateImageUpload(
         return;
     }
 
-    if (bl3d_unswizzle_pass && IsPixelFormatBCn(image.info.format) && image.info.type == ImageType::e3D && image.info.resources.levels == 1 && image.info.resources.layers == 1) {
+    if (bl3d_unswizzle_pass && IsPixelFormatBCn(image.info.format) &&
+        (image.info.type == ImageType::e3D || image.info.type == ImageType::e2D) &&
+        image.info.resources.levels == 1 && image.info.resources.layers == 1) {
         return bl3d_unswizzle_pass->Unswizzle(image, map, swizzles, z_start, z_count);
     }
 

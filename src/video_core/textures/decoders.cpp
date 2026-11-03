@@ -9,6 +9,17 @@
 #include <cstring>
 #include <span>
 
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#define TEGRA_TEXTURE_X86 1
+#if defined(__AVX2__) || defined(__AVX__)
+#define TEGRA_TEXTURE_AVX 1
+#endif
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#include <arm_neon.h>
+#define TEGRA_TEXTURE_NEON 1
+#endif
+
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/bit_util.h"
@@ -18,6 +29,71 @@
 
 namespace Tegra::Texture {
 namespace {
+
+template <bool TO_LINEAR>
+inline void CopySector64(u8* output, const u8* input, u32 unswizzled_offset,
+                         u32 s0, u32 s1, u32 s2, u32 s3) {
+    if constexpr (TO_LINEAR) {
+#if defined(TEGRA_TEXTURE_X86)
+        const __m128i r0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[unswizzled_offset + 0]));
+        const __m128i r1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[unswizzled_offset + 16]));
+        const __m128i r2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[unswizzled_offset + 32]));
+        const __m128i r3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[unswizzled_offset + 48]));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[s0]), r0);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[s1]), r1);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[s2]), r2);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[s3]), r3);
+#elif defined(TEGRA_TEXTURE_NEON)
+        const uint8x16_t r0 = vld1q_u8(&input[unswizzled_offset + 0]);
+        const uint8x16_t r1 = vld1q_u8(&input[unswizzled_offset + 16]);
+        const uint8x16_t r2 = vld1q_u8(&input[unswizzled_offset + 32]);
+        const uint8x16_t r3 = vld1q_u8(&input[unswizzled_offset + 48]);
+        vst1q_u8(&output[s0], r0);
+        vst1q_u8(&output[s1], r1);
+        vst1q_u8(&output[s2], r2);
+        vst1q_u8(&output[s3], r3);
+#else
+        std::memcpy(&output[s0], &input[unswizzled_offset + 0], 16);
+        std::memcpy(&output[s1], &input[unswizzled_offset + 16], 16);
+        std::memcpy(&output[s2], &input[unswizzled_offset + 32], 16);
+        std::memcpy(&output[s3], &input[unswizzled_offset + 48], 16);
+#endif
+    } else {
+#if defined(TEGRA_TEXTURE_AVX)
+        const __m128i r0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s0]));
+        const __m128i r1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s1]));
+        const __m128i r2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s2]));
+        const __m128i r3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s3]));
+        const __m256i y0 = _mm256_set_m128i(r1, r0);
+        const __m256i y1 = _mm256_set_m128i(r3, r2);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(&output[unswizzled_offset + 0]), y0);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(&output[unswizzled_offset + 32]), y1);
+#elif defined(TEGRA_TEXTURE_X86)
+        const __m128i r0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s0]));
+        const __m128i r1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s1]));
+        const __m128i r2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s2]));
+        const __m128i r3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&input[s3]));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[unswizzled_offset + 0]), r0);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[unswizzled_offset + 16]), r1);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[unswizzled_offset + 32]), r2);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(&output[unswizzled_offset + 48]), r3);
+#elif defined(TEGRA_TEXTURE_NEON)
+        const uint8x16_t r0 = vld1q_u8(&input[s0]);
+        const uint8x16_t r1 = vld1q_u8(&input[s1]);
+        const uint8x16_t r2 = vld1q_u8(&input[s2]);
+        const uint8x16_t r3 = vld1q_u8(&input[s3]);
+        vst1q_u8(&output[unswizzled_offset + 0], r0);
+        vst1q_u8(&output[unswizzled_offset + 16], r1);
+        vst1q_u8(&output[unswizzled_offset + 32], r2);
+        vst1q_u8(&output[unswizzled_offset + 48], r3);
+#else
+        std::memcpy(&output[unswizzled_offset + 0], &input[s0], 16);
+        std::memcpy(&output[unswizzled_offset + 16], &input[s1], 16);
+        std::memcpy(&output[unswizzled_offset + 32], &input[s2], 16);
+        std::memcpy(&output[unswizzled_offset + 48], &input[s3], 16);
+#endif
+    }
+}
 template <u32 mask>
 constexpr u32 pdep(u32 value) {
     u32 result = 0;
@@ -70,8 +146,27 @@ void SwizzleImpl(std::span<u8> output, std::span<const u8> input, u32 width, u32
             const u32 offset_y = (block_y >> block_height) * block_size +
                                  ((block_y & block_height_mask) << GOB_SIZE_SHIFT);
 
-            u32 swizzled_x = pdep<SWIZZLE_X_BITS>(origin_x * BYTES_PER_PIXEL);
-            for (u32 column = 0; column < width;
+            u32 column = 0;
+            if constexpr (64 % BYTES_PER_PIXEL == 0) {
+                constexpr u32 COLUMNS_PER_GOB = 64 / BYTES_PER_PIXEL;
+                const u32 unroll_limit = (width / COLUMNS_PER_GOB) * COLUMNS_PER_GOB;
+                for (; column < unroll_limit; column += COLUMNS_PER_GOB) {
+                    const u32 x = (column + origin_x) * BYTES_PER_PIXEL;
+                    const u32 offset_x = (x >> GOB_SIZE_X_SHIFT) << x_shift;
+                    const u32 base = offset_z + offset_y + offset_x + swizzled_y;
+                    const u32 unswizzled_offset = slice * pitch * height + line * pitch + x;
+
+                    const u32 s0 = base + 0;
+                    const u32 s1 = base + 32;
+                    const u32 s2 = base + 256;
+                    const u32 s3 = base + 288;
+
+                    CopySector64<TO_LINEAR>(output.data(), input.data(), unswizzled_offset, s0, s1, s2, s3);
+                }
+            }
+
+            u32 swizzled_x = pdep<SWIZZLE_X_BITS>((column + origin_x) * BYTES_PER_PIXEL);
+            for (; column < width;
                  ++column, incrpdep<SWIZZLE_X_BITS, BYTES_PER_PIXEL>(swizzled_x)) {
                 const u32 x = (column + origin_x) * BYTES_PER_PIXEL;
                 const u32 offset_x = (x >> GOB_SIZE_X_SHIFT) << x_shift;
