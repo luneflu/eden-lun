@@ -754,7 +754,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
             .device = *logical,
             .preferredLargeHeapBlockSize = is_integrated
                                            ? (64u * 1024u * 1024u)
-                                           : (256u * 1024u * 1024u),
+                                           : (2048u * 1024u * 1024u),
             .pAllocationCallbacks = nullptr,
             .pDeviceMemoryCallbacks = nullptr,
             .pHeapSizeLimit = nullptr,

@@ -225,20 +225,35 @@ private:
     }
 
     bool ShouldWait() const {
-        std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+        if (!buffer_cache.mutex.try_lock()) {
+            return false;
+        }
+        std::unique_lock lk_buf{buffer_cache.mutex, std::adopt_lock};
+        if (!texture_cache.mutex.try_lock()) {
+            return false;
+        }
+        std::unique_lock lk_tex{texture_cache.mutex, std::adopt_lock};
         return texture_cache.ShouldWaitAsyncFlushes() || buffer_cache.ShouldWaitAsyncFlushes() ||
                query_cache.ShouldWaitAsyncFlushes();
     }
 
     bool ShouldFlush() const {
-        std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+        if (!buffer_cache.mutex.try_lock()) {
+            return false;
+        }
+        std::unique_lock lk_buf{buffer_cache.mutex, std::adopt_lock};
+        if (!texture_cache.mutex.try_lock()) {
+            return false;
+        }
+        std::unique_lock lk_tex{texture_cache.mutex, std::adopt_lock};
         return texture_cache.HasUncommittedFlushes() || buffer_cache.HasUncommittedFlushes() ||
                query_cache.HasUncommittedFlushes();
     }
 
     void PopAsyncFlushes() {
         {
-            std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+            std::unique_lock lk_buf{buffer_cache.mutex};
+            std::unique_lock lk_tex{texture_cache.mutex};
             texture_cache.PopAsyncFlushes();
             buffer_cache.PopAsyncFlushes();
         }
@@ -247,7 +262,8 @@ private:
 
     void CommitAsyncFlushes() {
         {
-            std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+            std::unique_lock lk_buf{buffer_cache.mutex};
+            std::unique_lock lk_tex{texture_cache.mutex};
             texture_cache.CommitAsyncFlushes();
             buffer_cache.CommitAsyncFlushes();
         }

@@ -28,6 +28,7 @@
 #include "common/range_sets.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
+#include "common/thread.h"
 #include "common/slot_vector.h"
 #include "video_core/buffer_cache/buffer_base.h"
 #include "video_core/buffer_cache/virtual_range_cache.h"
@@ -344,7 +345,7 @@ public:
         } while (channel_state->has_deleted_buffers);
     }
 
-    std::recursive_mutex mutex;
+    Common::FastRecursiveMutex mutex;
     Runtime& runtime;
     bool any_buffer_uploaded = false;
 

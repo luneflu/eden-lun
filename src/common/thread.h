@@ -105,6 +105,57 @@ enum class ThreadPlacement : u32 {
     Efficiency = 2,
 };
 
+class FastRecursiveMutex {
+public:
+    FastRecursiveMutex() = default;
+    ~FastRecursiveMutex() = default;
+
+    FastRecursiveMutex(const FastRecursiveMutex&) = delete;
+    FastRecursiveMutex& operator=(const FastRecursiveMutex&) = delete;
+
+    void lock() noexcept {
+        const auto tid = std::this_thread::get_id();
+        if (owner.load(std::memory_order_relaxed) == tid) {
+            ++count;
+            return;
+        }
+        std::thread::id expected{};
+        while (!owner.compare_exchange_weak(expected, tid,
+                                            std::memory_order_acquire,
+                                            std::memory_order_relaxed)) {
+            expected = {};
+            std::this_thread::yield();
+        }
+        count = 1;
+    }
+
+    void unlock() noexcept {
+        if (--count == 0) {
+            owner.store({}, std::memory_order_release);
+        }
+    }
+
+    bool try_lock() noexcept {
+        const auto tid = std::this_thread::get_id();
+        if (owner.load(std::memory_order_relaxed) == tid) {
+            ++count;
+            return true;
+        }
+        std::thread::id expected{};
+        if (owner.compare_exchange_strong(expected, tid,
+                                          std::memory_order_acquire,
+                                          std::memory_order_relaxed)) {
+            count = 1;
+            return true;
+        }
+        return false;
+    }
+
+private:
+    std::atomic<std::thread::id> owner{};
+    u32 count{0};
+};
+
 void SetCurrentThreadPriority(ThreadPriority new_priority);
 void SetCurrentThreadName(const char* name);
 void SetCurrentThreadToPerformanceCores();

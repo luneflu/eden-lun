@@ -234,7 +234,8 @@ RasterizerVulkan::~RasterizerVulkan() {
 
 template <typename Func>
 void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
-    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+    std::unique_lock lk_buf{buffer_cache.mutex};
+    std::unique_lock lk_tex{texture_cache.mutex};
 
     SCOPE_EXIT {
         gpu.TickWork();
@@ -680,6 +681,9 @@ void RasterizerVulkan::Clear(u32 layer_count) {
 }
 
 void RasterizerVulkan::DispatchCompute() {
+    std::unique_lock lk_buf{buffer_cache.mutex};
+    std::unique_lock lk_tex{texture_cache.mutex};
+
     FlushWork();
     gpu_memory->FlushCaching();
 
@@ -687,7 +691,6 @@ void RasterizerVulkan::DispatchCompute() {
     if (!pipeline) {
         return;
     }
-    std::scoped_lock lock{texture_cache.mutex, buffer_cache.mutex};
     if (!pipeline->Configure(*kepler_compute, *gpu_memory, scheduler, buffer_cache,
                              texture_cache)) {
         return;
@@ -1044,7 +1047,7 @@ void RasterizerVulkan::AccelerateInlineToMemory(GPUVAddr address, size_t copy_si
     }
     gpu_memory->WriteBlockUnsafe(address, memory.data(), copy_size);
     {
-        std::unique_lock<std::recursive_mutex> lock{buffer_cache.mutex};
+        std::unique_lock lock{buffer_cache.mutex};
         if (!buffer_cache.InlineMemory(*cpu_addr, copy_size, memory)) {
             buffer_cache.WriteMemory(*cpu_addr, copy_size);
         }
@@ -1094,7 +1097,7 @@ void RasterizerVulkan::FlushWork() {
     static constexpr u32 CHECK_MASK = 3;
 #else
     static constexpr u32 DRAWS_TO_DISPATCH = 4096;
-    static constexpr u32 CHECK_MASK = 7;
+    static constexpr u32 CHECK_MASK = 63;
 #endif // __ANDROID__
 
     static_assert(DRAWS_TO_DISPATCH % (CHECK_MASK + 1) == 0);
