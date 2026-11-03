@@ -1932,12 +1932,13 @@ Image::~Image() {
 
 void Image::AllocateComputeUnswizzleBuffer(u32 max_slices) {
     using VideoCore::Surface::BytesPerBlock;
+    using VideoCore::Surface::DefaultBlockWidth;
+    using VideoCore::Surface::DefaultBlockHeight;
 
-    const u32 block_bytes  = BytesPerBlock(info.format); // 8 for BC1, 16 for BC6H
-    const u32 block_width  = 4;
-    const u32 block_height = 4;
+    const u32 block_bytes  = BytesPerBlock(info.format);
+    const u32 block_width  = DefaultBlockWidth(info.format);
+    const u32 block_height = DefaultBlockHeight(info.format);
 
-    // BCn is 4x4x1 blocks
     const u32 blocks_x = (info.size.width  + block_width  - 1) / block_width;
     const u32 blocks_y = (info.size.height + block_height - 1) / block_height;
     const u32 blocks_z = (std::min)(max_slices, info.size.depth);
@@ -3155,9 +3156,7 @@ void TextureCacheRuntime::AccelerateImageUpload(
         return;
     }
 
-    if (bl3d_unswizzle_pass && IsPixelFormatBCn(image.info.format) &&
-        (image.info.type == ImageType::e3D || image.info.type == ImageType::e2D) &&
-        image.info.resources.levels == 1 && image.info.resources.layers == 1) {
+    if (bl3d_unswizzle_pass && CanAccelerateImageUpload(image)) {
         return bl3d_unswizzle_pass->Unswizzle(image, map, swizzles, z_start, z_count);
     }
 

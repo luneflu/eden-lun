@@ -395,13 +395,17 @@ private:
 };
 
 inline bool TextureCacheRuntime::CanAccelerateImageUpload(const Image& image) const noexcept {
-    return Settings::values.gpu_unswizzle_enabled.GetValue() &&
-           bl3d_unswizzle_pass.has_value() &&
-           VideoCore::Surface::IsPixelFormatBCn(image.info.format) &&
-           (image.info.type == VideoCommon::ImageType::e2D ||
-            image.info.type == VideoCommon::ImageType::e3D) &&
-           image.info.resources.levels == 1 &&
-           image.info.resources.layers == 1;
+    if (!Settings::values.gpu_unswizzle_enabled.GetValue() || !bl3d_unswizzle_pass.has_value()) {
+        return false;
+    }
+    if (image.info.resources.levels != 1 || image.info.resources.layers != 1) {
+        return false;
+    }
+    if (image.info.type != VideoCommon::ImageType::e2D &&
+        image.info.type != VideoCommon::ImageType::e3D) {
+        return false;
+    }
+    return VideoCore::Surface::IsPixelFormatBCn(image.info.format);
 }
 
 class ImageView : public VideoCommon::ImageViewBase {

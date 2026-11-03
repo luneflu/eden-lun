@@ -633,7 +633,7 @@ struct alignas(16) BlockLinearUnswizzle3DPushConstants {
 
     u32 block_depth;             // Offset 48
     u32 block_depth_mask;        // Offset 52
-    s32 _pad;                    // Offset 56
+    u32 tile_shift;              // Offset 56
 
     s32 destination[3];          // Offset 60
     s32 _pad_end;                // Offset 72
@@ -717,8 +717,10 @@ void BlockLinearUnswizzle3DPass::Unswizzle(
     const auto& sw = swizzles[0];
     const auto params = MakeBlockLinearSwizzle3DParams(sw, image.info);
 
-    const u32 blocks_x = (image.info.size.width  + 3) / 4;
-    const u32 blocks_y = (image.info.size.height + 3) / 4;
+    const u32 tile_width = VideoCore::Surface::DefaultBlockWidth(image.info.format);
+    const u32 tile_height = VideoCore::Surface::DefaultBlockHeight(image.info.format);
+    const u32 blocks_x = (image.info.size.width  + tile_width  - 1) / tile_width;
+    const u32 blocks_y = (image.info.size.height + tile_height - 1) / tile_height;
 
     scheduler.RequestOutsideRenderPassOperationContext();
     for (u32 z_offset = 0; z_offset < total_slices; z_offset += MAX_BATCH_SLICES) {
@@ -756,6 +758,11 @@ void BlockLinearUnswizzle3DPass::UnswizzleChunk(
     pc.block_height_mask    = params.block_height_mask;
     pc.block_depth          = params.block_depth;
     pc.block_depth_mask     = params.block_depth_mask;
+    const u32 tile_width = VideoCore::Surface::DefaultBlockWidth(image.info.format);
+    const u32 tile_height = VideoCore::Surface::DefaultBlockHeight(image.info.format);
+    const u32 tile_width_shift = static_cast<u32>(std::countr_zero(tile_width));
+    const u32 tile_height_shift = static_cast<u32>(std::countr_zero(tile_height));
+    pc.tile_shift = tile_width_shift | (tile_height_shift << 16);
 
     pc.blocks_dim[0] = blocks_x;
     pc.blocks_dim[1] = blocks_y;

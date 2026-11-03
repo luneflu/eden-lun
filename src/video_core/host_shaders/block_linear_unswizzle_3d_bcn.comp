@@ -42,7 +42,7 @@ layout(push_constant) uniform PushConstants {
 
     uint block_depth;           // Offset 48
     uint block_depth_mask;      // Offset 52
-    int _pad;                   // Offset 56
+    uint tile_shift;            // Offset 56
 
     ivec3 destination;          // Offset 60
 } pc;
@@ -130,10 +130,11 @@ void main() {
     }
 
     uint bytes_per_block = 1u << pc.bytes_per_block_log2;
-    // Origin is in pixels, divide by 4 for block-space (e.g. BCn formats)
+    uint tile_width_shift = pc.tile_shift & 0xffffu;
+    uint tile_height_shift = pc.tile_shift >> 16u;
     uvec3 pos;
-    pos.x = (block_coord.x + (pc.origin.x >> 2u)) * bytes_per_block;
-    pos.y = block_coord.y + (pc.origin.y >> 2u);
+    pos.x = (block_coord.x + (pc.origin.x >> tile_width_shift)) * bytes_per_block;
+    pos.y = block_coord.y + (pc.origin.y >> tile_height_shift);
     pos.z = block_coord.z + pc.origin.z;
 
     uint swizzle = SwizzleOffset(pos.xy);
@@ -155,8 +156,10 @@ void main() {
                        (block_coord.z * pc.blocks_dim.x * pc.blocks_dim.y);
     uint out_idx = block_index * (bytes_per_block >> 2u);
 
-    out_u32[out_idx]     = texel.x;
-    out_u32[out_idx + 1u] = texel.y;
+    out_u32[out_idx] = texel.x;
+    if (pc.bytes_per_block_log2 >= 3u) {
+        out_u32[out_idx + 1u] = texel.y;
+    }
     if (pc.bytes_per_block_log2 == 4u) {
         out_u32[out_idx + 2u] = texel.z;
         out_u32[out_idx + 3u] = texel.w;
