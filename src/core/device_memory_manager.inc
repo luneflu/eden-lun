@@ -28,6 +28,47 @@ namespace Core {
 
 namespace {
 
+inline void CopyBytesFast(void* dst, const void* src, size_t size) noexcept {
+    u8* d = static_cast<u8*>(dst);
+    const u8* s = static_cast<const u8*>(src);
+#if defined(__AVX2__) || defined(_M_X64)
+    while (size >= 32) {
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(d),
+                            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(s)));
+        d += 32;
+        s += 32;
+        size -= 32;
+    }
+    if (size >= 16) {
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(d),
+                         _mm_loadu_si128(reinterpret_cast<const __m128i*>(s)));
+        d += 16;
+        s += 16;
+        size -= 16;
+    }
+#endif
+    while (size >= 8) {
+        u64 val;
+        std::memcpy(&val, s, 8);
+        std::memcpy(d, &val, 8);
+        d += 8;
+        s += 8;
+        size -= 8;
+    }
+    if (size >= 4) {
+        u32 val;
+        std::memcpy(&val, s, 4);
+        std::memcpy(d, &val, 4);
+        d += 4;
+        s += 4;
+        size -= 4;
+    }
+    while (size > 0) {
+        *d++ = *s++;
+        --size;
+    }
+}
+
 class MultiAddressContainer {
 public:
     MultiAddressContainer() = default;
@@ -475,7 +516,7 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
         const DAddr guest_page = address & ~static_cast<DAddr>(Memory::YUZU_PAGEMASK);
         for (size_t i = 0; i < 4; ++i) {
             if (t_slot[i].guest_page == guest_page && t_slot[i].host_ptr != nullptr) {
-                std::memcpy(dest_pointer, t_slot[i].host_ptr + page_offset, size);
+                CopyBytesFast(dest_pointer, t_slot[i].host_ptr + page_offset, size);
                 return;
             }
         }
@@ -486,7 +527,7 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
             auto* const mem_ptr = GetPointerFromRaw<u8>((PAddr(phys_addr - 1) << Memory::YUZU_PAGEBITS));
             t_slot[cache_cursor % t_slot.size()] = TranslationEntry{.guest_page = guest_page, .host_ptr = mem_ptr};
             cache_cursor = (cache_cursor + 1) & 3U;
-            std::memcpy(dest_pointer, mem_ptr + page_offset, size);
+            CopyBytesFast(dest_pointer, mem_ptr + page_offset, size);
             return;
         }
     }
@@ -500,7 +541,7 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
             std::memset(dest_pointer, 0, copy_amount);
         },
         [&](size_t copy_amount, const u8* const src_ptr) {
-            std::memcpy(dest_pointer, src_ptr, copy_amount);
+            CopyBytesFast(dest_pointer, src_ptr, copy_amount);
         },
         [&](const std::size_t copy_amount) {
             dest_pointer = static_cast<u8*>(dest_pointer) + copy_amount;
