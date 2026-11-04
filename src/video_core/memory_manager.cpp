@@ -245,12 +245,16 @@ __declspec(noinline) DAddr MemoryManager::GpuToCpuAddressSlow(GPUVAddr gpu_addr,
 }
 
 std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr addr, std::size_t size) const {
+    const DAddr raw = GpuToCpuAddressRaw(addr);
+    if (raw != kInvalidDAddr) [[likely]] {
+        return raw;
+    }
     size_t page_index{addr >> page_bits};
     const size_t page_last{(addr + size + page_size - 1) >> page_bits};
     while (page_index < page_last) {
-        const auto page_addr{GpuToCpuAddress(page_index << page_bits)};
-        if (page_addr) {
-            return page_addr;
+        const DAddr sub_raw = GpuToCpuAddressRaw(page_index << page_bits);
+        if (sub_raw != kInvalidDAddr) {
+            return sub_raw;
         }
         ++page_index;
     }

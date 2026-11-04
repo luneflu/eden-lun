@@ -213,7 +213,27 @@ struct WordManager {
     /// @param size   Size in bytes of the region to query for modifications
     [[nodiscard]] bool IsRegionModified(Type type, u64 offset, u64 size) const noexcept {
         //static_assert(type != Type::Untracked);
+        const u64 start = offset;
+        const u64 end = offset + size;
+        if (start >= size_bytes || end <= start) [[unlikely]] {
+            return false;
+        }
+        const size_t start_word = start / BYTES_PER_WORD;
+        const size_t end_word = (end - 1ULL) / BYTES_PER_WORD;
         const std::span<const u64> state_words = Span(type);
+        if (start_word < num_words) [[likely]] {
+            const size_t clamped_end = (std::min)(end_word + 1, num_words);
+            bool any_nonzero = false;
+            for (size_t w = start_word; w < clamped_end; ++w) {
+                if (state_words[w] != 0) {
+                    any_nonzero = true;
+                    break;
+                }
+            }
+            if (!any_nonzero) [[likely]] {
+                return false;
+            }
+        }
         const std::span<const u64> untracked_words = Span(Type::Untracked);
         bool result = false;
         IterateWords(offset, size, [&](size_t index, u64 mask) {

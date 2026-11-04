@@ -199,47 +199,48 @@ void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
 
 template <class P>
 bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount) {
-    const std::optional<DAddr> cpu_src_address = gpu_memory->GpuToCpuAddress(src_address);
-    const std::optional<DAddr> cpu_dest_address = gpu_memory->GpuToCpuAddress(dest_address);
-    if (!cpu_src_address || !cpu_dest_address) {
+    const DAddr cpu_src_address = gpu_memory->GpuToCpuAddressRaw(src_address);
+    const DAddr cpu_dest_address = gpu_memory->GpuToCpuAddressRaw(dest_address);
+    if (cpu_src_address == Tegra::MemoryManager::kInvalidDAddr ||
+        cpu_dest_address == Tegra::MemoryManager::kInvalidDAddr) {
         return false;
     }
-    const bool source_dirty = IsRegionRegistered(*cpu_src_address, amount);
-    const bool dest_dirty = IsRegionRegistered(*cpu_dest_address, amount);
+    const bool source_dirty = IsRegionRegistered(cpu_src_address, amount);
+    const bool dest_dirty = IsRegionRegistered(cpu_dest_address, amount);
     if (!source_dirty && !dest_dirty) {
         return false;
     }
 
-    ClearDownload(*cpu_dest_address, amount);
+    ClearDownload(cpu_dest_address, amount);
 
     BufferId buffer_a;
     BufferId buffer_b;
     do {
         channel_state->has_deleted_buffers = false;
-        buffer_a = FindBuffer(*cpu_src_address, static_cast<u32>(amount), false);
-        buffer_b = FindBuffer(*cpu_dest_address, static_cast<u32>(amount), false);
+        buffer_a = FindBuffer(cpu_src_address, static_cast<u32>(amount), false);
+        buffer_b = FindBuffer(cpu_dest_address, static_cast<u32>(amount), false);
     } while (channel_state->has_deleted_buffers);
     auto& src_buffer = slot_buffers[buffer_a];
     auto& dest_buffer = slot_buffers[buffer_b];
-    SynchronizeBuffer(src_buffer, *cpu_src_address, static_cast<u32>(amount));
-    SynchronizeBuffer(dest_buffer, *cpu_dest_address, static_cast<u32>(amount));
+    SynchronizeBuffer(src_buffer, cpu_src_address, static_cast<u32>(amount));
+    SynchronizeBuffer(dest_buffer, cpu_dest_address, static_cast<u32>(amount));
     std::array copies{BufferCopy{
-        .src_offset = src_buffer.Offset(*cpu_src_address),
-        .dst_offset = dest_buffer.Offset(*cpu_dest_address),
+        .src_offset = src_buffer.Offset(cpu_src_address),
+        .dst_offset = dest_buffer.Offset(cpu_dest_address),
         .size = amount,
     }};
 
     boost::container::small_vector<std::pair<DAddr, size_t>, 4> tmp_intervals;
     auto mirror = [&](DAddr base_address, DAddr base_address_end) {
         const u64 size = base_address_end - base_address;
-        const DAddr diff = base_address - *cpu_src_address;
-        const DAddr new_base_address = *cpu_dest_address + diff;
+        const DAddr diff = base_address - cpu_src_address;
+        const DAddr new_base_address = cpu_dest_address + diff;
         tmp_intervals.push_back({new_base_address, size});
         uncommitted_gpu_modified_ranges.Add(new_base_address, size);
     };
-    gpu_modified_ranges.ForEachInRange(*cpu_src_address, amount, mirror);
+    gpu_modified_ranges.ForEachInRange(cpu_src_address, amount, mirror);
     // This subtraction in this order is important for overlapping copies.
-    gpu_modified_ranges.Subtract(*cpu_dest_address, amount);
+    gpu_modified_ranges.Subtract(cpu_dest_address, amount);
     const bool has_new_downloads = tmp_intervals.size() != 0;
     for (const auto& pair : tmp_intervals) {
         gpu_modified_ranges.Add(pair.first, pair.second);
@@ -249,7 +250,7 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
     dest_buffer.MarkUsage(copy.dst_offset, copy.size);
     runtime.CopyBuffer(dest_buffer, src_buffer, copies, true);
     if (has_new_downloads) {
-        memory_tracker.MarkRegionAsGpuModified(*cpu_dest_address, amount);
+        memory_tracker.MarkRegionAsGpuModified(cpu_dest_address, amount);
         const bool should_sync = Settings::IsGPUFenceBehaviorBalanced() || Settings::IsGPUFenceBehaviorAccurate();
         if (should_sync) {
             runtime.Finish();
@@ -257,29 +258,29 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
     }
 
     Tegra::Memory::DeviceGuestMemoryScoped<u8, Tegra::Memory::GuestMemoryFlags::UnsafeReadWrite>
-        tmp(device_memory, *cpu_src_address, amount, &tmp_buffer);
-    tmp.SetAddressAndSize(*cpu_dest_address, amount);
+        tmp(device_memory, cpu_src_address, amount, &tmp_buffer);
+    tmp.SetAddressAndSize(cpu_dest_address, amount);
     return true;
 }
 
 template <class P>
 bool BufferCache<P>::DMAClear(GPUVAddr dst_address, u64 amount, u32 value) {
-    const std::optional<DAddr> cpu_dst_address = gpu_memory->GpuToCpuAddress(dst_address);
-    if (!cpu_dst_address) {
+    const DAddr cpu_dst_address = gpu_memory->GpuToCpuAddressRaw(dst_address);
+    if (cpu_dst_address == Tegra::MemoryManager::kInvalidDAddr) {
         return false;
     }
-    const bool dest_dirty = IsRegionRegistered(*cpu_dst_address, amount);
+    const bool dest_dirty = IsRegionRegistered(cpu_dst_address, amount);
     if (!dest_dirty) {
         return false;
     }
 
     const size_t size = amount * sizeof(u32);
-    ClearDownload(*cpu_dst_address, size);
-    gpu_modified_ranges.Subtract(*cpu_dst_address, size);
+    ClearDownload(cpu_dst_address, size);
+    gpu_modified_ranges.Subtract(cpu_dst_address, size);
 
-    const BufferId buffer = FindBuffer(*cpu_dst_address, static_cast<u32>(size), false);
+    const BufferId buffer = FindBuffer(cpu_dst_address, static_cast<u32>(size), false);
     Buffer& dest_buffer = slot_buffers[buffer];
-    const u32 offset = dest_buffer.Offset(*cpu_dst_address);
+    const u32 offset = dest_buffer.Offset(cpu_dst_address);
     runtime.ClearBuffer(dest_buffer, offset, size, value);
     dest_buffer.MarkUsage(offset, size);
     return true;
@@ -289,11 +290,11 @@ template <class P>
 std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainBuffer(GPUVAddr gpu_addr, u32 size,
                                                                  ObtainBufferSynchronize sync_info,
                                                                  ObtainBufferOperation post_op) {
-    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
-    if (!device_addr) {
+    const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
+    if (device_addr == Tegra::MemoryManager::kInvalidDAddr) {
         return {&slot_buffers[NULL_BUFFER_ID], 0};
     }
-    return ObtainCPUBuffer(*device_addr, size, sync_info, post_op);
+    return ObtainCPUBuffer(device_addr, size, sync_info, post_op);
 }
 
 template <class P>
@@ -330,9 +331,9 @@ std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
 template <class P>
 void BufferCache<P>::BindGraphicsUniformBuffer(size_t stage, u32 index, GPUVAddr gpu_addr,
                                                u32 size) {
-    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+    const DAddr device_addr = gpu_memory->GpuToCpuAddressRaw(gpu_addr);
     const Binding binding{
-        .device_addr = *device_addr,
+        .device_addr = device_addr,
         .size = size,
         .buffer_id = BufferId{},
     };
