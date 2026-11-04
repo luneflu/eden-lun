@@ -24,6 +24,12 @@
 #include "core/device_memory_manager.h"
 #include "core/memory.h"
 
+#if defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
+#include <arm_neon.h>
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
+
 namespace Core {
 
 namespace {
@@ -31,7 +37,7 @@ namespace {
 inline void CopyBytesFast(void* dst, const void* src, size_t size) noexcept {
     u8* d = static_cast<u8*>(dst);
     const u8* s = static_cast<const u8*>(src);
-#if defined(__AVX2__) || defined(_M_X64)
+#if defined(__AVX2__)
     while (size >= 32) {
         _mm256_storeu_si256(reinterpret_cast<__m256i*>(d),
                             _mm256_loadu_si256(reinterpret_cast<const __m256i*>(s)));
@@ -42,6 +48,21 @@ inline void CopyBytesFast(void* dst, const void* src, size_t size) noexcept {
     if (size >= 16) {
         _mm_storeu_si128(reinterpret_cast<__m128i*>(d),
                          _mm_loadu_si128(reinterpret_cast<const __m128i*>(s)));
+        d += 16;
+        s += 16;
+        size -= 16;
+    }
+#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+    while (size >= 16) {
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(d),
+                         _mm_loadu_si128(reinterpret_cast<const __m128i*>(s)));
+        d += 16;
+        s += 16;
+        size -= 16;
+    }
+#elif defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
+    while (size >= 16) {
+        vst1q_u8(d, vld1q_u8(s));
         d += 16;
         s += 16;
         size -= 16;
