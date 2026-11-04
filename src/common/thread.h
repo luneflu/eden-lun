@@ -16,6 +16,10 @@
 #include "common/common_types.h"
 #include "common/polyfill_thread.h"
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 namespace Common {
 
 class Event {
@@ -114,45 +118,73 @@ public:
     FastRecursiveMutex& operator=(const FastRecursiveMutex&) = delete;
 
     void lock() noexcept {
-        const auto tid = std::this_thread::get_id();
-        if (owner.load(std::memory_order_relaxed) == tid) {
+        const auto me = Self();
+        if (owner.load(std::memory_order_relaxed) == me) {
             ++count;
             return;
         }
-        std::thread::id expected{};
-        while (!owner.compare_exchange_weak(expected, tid,
-                                            std::memory_order_acquire,
-                                            std::memory_order_relaxed)) {
-            expected = {};
-            std::this_thread::yield();
+        u32 expected = 0;
+        if (!state.compare_exchange_strong(expected, 1, std::memory_order_acquire,
+                                           std::memory_order_relaxed)) {
+            LockContended();
         }
+        owner.store(me, std::memory_order_relaxed);
         count = 1;
     }
 
     void unlock() noexcept {
-        if (--count == 0) {
-            owner.store({}, std::memory_order_release);
+        if (--count != 0) {
+            return;
+        }
+        owner.store(0, std::memory_order_relaxed);
+        if (state.exchange(0, std::memory_order_release) == 2) {
+            state.notify_one();
         }
     }
 
     bool try_lock() noexcept {
-        const auto tid = std::this_thread::get_id();
-        if (owner.load(std::memory_order_relaxed) == tid) {
+        const auto me = Self();
+        if (owner.load(std::memory_order_relaxed) == me) {
             ++count;
             return true;
         }
-        std::thread::id expected{};
-        if (owner.compare_exchange_strong(expected, tid,
-                                          std::memory_order_acquire,
-                                          std::memory_order_relaxed)) {
-            count = 1;
-            return true;
+        u32 expected = 0;
+        if (!state.compare_exchange_strong(expected, 1, std::memory_order_acquire,
+                                           std::memory_order_relaxed)) {
+            return false;
         }
-        return false;
+        owner.store(me, std::memory_order_relaxed);
+        count = 1;
+        return true;
     }
 
 private:
-    std::atomic<std::thread::id> owner{};
+    static u64 Self() noexcept {
+        static thread_local char token;
+        return static_cast<u64>(reinterpret_cast<uintptr_t>(&token));
+    }
+
+    void LockContended() noexcept {
+        for (u32 spins = 0; spins < 64; ++spins) {
+            u32 expected = 0;
+            if (state.load(std::memory_order_relaxed) == 0 &&
+                state.compare_exchange_weak(expected, 1, std::memory_order_acquire,
+                                            std::memory_order_relaxed)) {
+                return;
+            }
+#ifdef _MSC_VER
+            _mm_pause();
+#else
+            __builtin_ia32_pause();
+#endif
+        }
+        while (state.exchange(2, std::memory_order_acquire) != 0) {
+            state.wait(2, std::memory_order_relaxed);
+        }
+    }
+
+    std::atomic<u32> state{0};
+    std::atomic<u64> owner{0};
     u32 count{0};
 };
 
