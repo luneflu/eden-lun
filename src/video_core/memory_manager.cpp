@@ -211,38 +211,36 @@ __declspec(noinline) DAddr MemoryManager::GpuToCpuAddressSlow(GPUVAddr gpu_addr)
     if (!IsWithinGPUAddressRange(gpu_addr)) [[unlikely]] {
         return kInvalidDAddr;
     }
-    const u32 gen = translation_generation.load(std::memory_order_acquire);
-    if ((gen & 1) != 0) [[unlikely]] {
-        if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
-            const size_t big_index{PageEntryIndex(gpu_addr, true)};
-            return (DAddr(big_page_table_dev[big_index]) << cpu_page_bits) + (gpu_addr & big_page_mask);
-        }
-        if (GetEntry(gpu_addr, false) == EntryType::Mapped) {
-            const size_t short_index{PageEntryIndex(gpu_addr, false)};
-            return (DAddr(page_table[short_index]) << cpu_page_bits) + (gpu_addr & page_mask);
-        }
-        return kInvalidDAddr;
-    }
-
     if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
         const size_t big_index{PageEntryIndex(gpu_addr, true)};
-        const DAddr dev_addr_base = DAddr(big_page_table_dev[big_index]) << cpu_page_bits;
-        static thread_local ThreadTranslationCache cache{};
-        if (cache.generation != gen) {
-            cache.generation = gen;
-            cache.big.fill(TranslationCacheEntry{});
-        }
-        const u64 key = (static_cast<u64>(unique_identifier) << 32) | static_cast<u32>(big_index);
-        const size_t slot = (big_index ^ (big_index >> 10)) & (kTranslateCacheEntries - 1);
-        cache.big[slot] = TranslationCacheEntry{key, dev_addr_base};
-        return dev_addr_base + (gpu_addr & big_page_mask);
+        return (DAddr(big_page_table_dev[big_index]) << cpu_page_bits) + (gpu_addr & big_page_mask);
     }
-
     if (GetEntry(gpu_addr, false) == EntryType::Mapped) {
         const size_t short_index{PageEntryIndex(gpu_addr, false)};
         return (DAddr(page_table[short_index]) << cpu_page_bits) + (gpu_addr & page_mask);
     }
+    return kInvalidDAddr;
+}
 
+__declspec(noinline) DAddr MemoryManager::GpuToCpuAddressSlow(GPUVAddr gpu_addr, u64 key, size_t set_idx) const {
+    if (!IsWithinGPUAddressRange(gpu_addr)) [[unlikely]] {
+        return kInvalidDAddr;
+    }
+    if (GetEntry(gpu_addr, true) == EntryType::Mapped) {
+        const size_t big_index{PageEntryIndex(gpu_addr, true)};
+        const DAddr dev_addr_base = DAddr(big_page_table_dev[big_index]) << cpu_page_bits;
+        auto& cache = TranslationCacheTLS();
+        const u8 victim = cache.lru[set_idx] & 1;
+        cache.entries[set_idx * 2 + victim] = TranslationCacheEntry{key, dev_addr_base};
+        cache.lru[set_idx] = 1 - victim;
+        cache.mru_key = key;
+        cache.mru_base = dev_addr_base;
+        return dev_addr_base + (gpu_addr & big_page_mask);
+    }
+    if (GetEntry(gpu_addr, false) == EntryType::Mapped) {
+        const size_t short_index{PageEntryIndex(gpu_addr, false)};
+        return (DAddr(page_table[short_index]) << cpu_page_bits) + (gpu_addr & page_mask);
+    }
     return kInvalidDAddr;
 }
 

@@ -56,39 +56,64 @@ public:
 
     struct TranslationCacheEntry {
         u64 key{0};
-        u64 base{kInvalidDAddr};
+        u64 base{0};
     };
 
-    static constexpr size_t kTranslateCacheEntries = 1024;
+    static constexpr size_t kTranslateCacheSets = 1024;
 
     struct ThreadTranslationCache {
-        u32 generation{~0U};
-        std::array<TranslationCacheEntry, kTranslateCacheEntries> big{};
+        u64 mru_key{0};
+        u64 mru_base{0};
+        std::array<TranslationCacheEntry, kTranslateCacheSets * 2> entries{};
+        std::array<u8, kTranslateCacheSets> lru{};
     };
 
+    static inline ThreadTranslationCache& TranslationCacheTLS() noexcept {
+        static thread_local ThreadTranslationCache cache{};
+        return cache;
+    }
+
     [[nodiscard]] DAddr GpuToCpuAddressSlow(GPUVAddr gpu_addr) const;
+    [[nodiscard]] DAddr GpuToCpuAddressSlow(GPUVAddr gpu_addr, u64 key, size_t set_idx) const;
 
     [[nodiscard]] inline DAddr GpuToCpuAddressRaw(GPUVAddr gpu_addr) const noexcept {
-        if (!IsWithinGPUAddressRange(gpu_addr)) [[unlikely]] {
+        if (!IsWithinGPUAddressRange(gpu_addr) || gpu_addr == 0) [[unlikely]] {
             return kInvalidDAddr;
         }
-        const u32 gen = translation_generation.load(std::memory_order_relaxed);
+        const u32 gen = translation_generation.load(std::memory_order_acquire);
         if ((gen & 1) != 0) [[unlikely]] {
             return GpuToCpuAddressSlow(gpu_addr);
         }
-        static thread_local ThreadTranslationCache cache{};
-        if (cache.generation != gen) [[unlikely]] {
-            cache.generation = gen;
-            cache.big.fill(TranslationCacheEntry{});
-        }
         const size_t big_index = (gpu_addr >> big_page_bits) & big_page_table_mask;
-        const u64 key = (static_cast<u64>(unique_identifier) << 32) | static_cast<u32>(big_index);
-        const size_t slot = (big_index ^ (big_index >> 10)) & (kTranslateCacheEntries - 1);
-        const TranslationCacheEntry& entry = cache.big[slot];
-        if (entry.key == key && entry.base != kInvalidDAddr) [[likely]] {
-            return entry.base + (gpu_addr & big_page_mask);
+        const u64 key = (static_cast<u64>(unique_identifier & 0xFFULL) << 56) |
+                        (static_cast<u64>(gen) << 24) |
+                        static_cast<u64>(big_index & 0xFFFFFFULL);
+
+        auto& cache = TranslationCacheTLS();
+
+        // 1-entry MRU fastpath
+        if (cache.mru_key == key) [[likely]] {
+            return cache.mru_base + (gpu_addr & big_page_mask);
         }
-        return GpuToCpuAddressSlow(gpu_addr);
+
+        const size_t set_idx = (big_index ^ (big_index >> 10)) & (kTranslateCacheSets - 1);
+        const size_t base_slot = set_idx * 2;
+        const TranslationCacheEntry& e0 = cache.entries[base_slot];
+        if (e0.key == key) [[likely]] {
+            cache.mru_key = key;
+            cache.mru_base = e0.base;
+            cache.lru[set_idx] = 1;
+            return e0.base + (gpu_addr & big_page_mask);
+        }
+        const TranslationCacheEntry& e1 = cache.entries[base_slot + 1];
+        if (e1.key == key) [[likely]] {
+            cache.mru_key = key;
+            cache.mru_base = e1.base;
+            cache.lru[set_idx] = 0;
+            return e1.base + (gpu_addr & big_page_mask);
+        }
+
+        return GpuToCpuAddressSlow(gpu_addr, key, set_idx);
     }
 
     [[nodiscard]] inline std::optional<DAddr> GpuToCpuAddress(GPUVAddr addr) const noexcept {
@@ -262,7 +287,7 @@ private:
     Common::SparseLargeVector<u32> big_page_table_dev;
 
     // Bumped whenever the page tables change, invalidating the address translation caches.
-    std::atomic<u32> translation_generation{0};
+    std::atomic<u32> translation_generation{2};
 
     std::vector<u64> big_page_continuous;
     boost::container::small_vector<std::pair<DAddr, std::size_t>, 32> page_stash{};
