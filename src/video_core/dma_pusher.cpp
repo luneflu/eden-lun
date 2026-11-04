@@ -176,11 +176,22 @@ void DmaPusher::ProcessCommands(std::span<const CommandHeader> commands) {
                 dma_state.non_incrementing = false;
                 dma_increment_once = false;
                 break;
-            case SubmissionMode::NonIncreasing:
+            case SubmissionMode::NonIncreasing: {
                 SetState(command_header);
                 dma_state.non_incrementing = true;
                 dma_increment_once = false;
-                break;
+                index++;
+                if (dma_state.method_count && index < commands.size()) [[likely]] {
+                    auto const& data_header = commands[index];
+                    dma_state.dma_word_offset = u32(index * sizeof(u32));
+                    const u32 max_write = u32(std::min<std::size_t>(index + dma_state.method_count, commands.size()) - index);
+                    CallMultiMethod(&data_header.argument, max_write);
+                    dma_state.method_count -= max_write;
+                    dma_state.is_last_call = true;
+                    index += max_write;
+                }
+                continue;
+            }
             case SubmissionMode::Inline: {
                 const u32 method = command_header.method;
                 const u32 subch = command_header.subchannel;
