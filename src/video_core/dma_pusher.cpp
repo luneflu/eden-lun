@@ -181,14 +181,26 @@ void DmaPusher::ProcessCommands(std::span<const CommandHeader> commands) {
                 dma_state.non_incrementing = true;
                 dma_increment_once = false;
                 break;
-            case SubmissionMode::Inline:
-                dma_state.method = command_header.method;
-                dma_state.subchannel = command_header.subchannel;
-                dma_state.dma_word_offset = u64(-s64(dma_state.dma_get)); // negate to set address as 0
+            case SubmissionMode::Inline: {
+                const u32 method = command_header.method;
+                const u32 subch = command_header.subchannel;
+                dma_state.method = method;
+                dma_state.subchannel = subch;
+                if (method >= non_puller_methods) [[likely]] {
+                    auto* const subchannel = subchannels[subch];
+                    if (!subchannel->execution_mask[method]) [[likely]] {
+                        subchannel->PushMethod(method, command_header.arg_count);
+                        dma_state.non_incrementing = true;
+                        dma_increment_once = false;
+                        break;
+                    }
+                }
+                dma_state.dma_word_offset = u64(-s64(dma_state.dma_get));
                 CallMethod(command_header.arg_count);
                 dma_state.non_incrementing = true;
                 dma_increment_once = false;
                 break;
+            }
             case SubmissionMode::IncreaseOnce:
                 SetState(command_header);
                 dma_state.non_incrementing = false;
